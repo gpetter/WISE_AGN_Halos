@@ -4,9 +4,10 @@ import matplotlib.cm as cm
 import healpy as hp
 import lensingModel
 import importlib
+from astropy.table import Table
 importlib.reload(lensingModel)
 #import glob
-#import mpl_scatter_density
+import mpl_scatter_density
 plt.style.use('science')
 
 
@@ -33,7 +34,7 @@ def plot_assef_cut(table):
 	plt.close('all')
 
 
-def plot_color_dists(table, nondet_colors):
+def plot_color_dists(table, nondet_colors, optband):
 	nbins = int(np.max(table['bin']))
 	colorscheme = return_colorscheme(nbins)
 	#firstcolor, secondcolor = colorkey.split('-')[0], colorkey.split('-')[1]
@@ -51,9 +52,9 @@ def plot_color_dists(table, nondet_colors):
 
 	nbins_nondet = 7
 
-	plt.hist(nondet_colors, color=colorscheme[len(colorscheme)-1], hatch='/', bins=nbins_nondet, fill=False,
+	"""plt.hist(nondet_colors, color=colorscheme[len(colorscheme)-1], hatch='/', bins=nbins_nondet, fill=False,
 	         weights=np.ones(len(nondet_colors)) *
-	                 float(len(table) - len(detect_table))/(nbins_nondet * len(nondet_colors)))
+	                 float(len(table) - len(detect_table))/(nbins_nondet * len(nondet_colors)))"""
 
 	print(np.sum(np.ones(len(nondet_colors)) *
 	                 float(len(table) - len(detect_table))/(nbins_nondet * len(nondet_colors))))
@@ -62,7 +63,7 @@ def plot_color_dists(table, nondet_colors):
 	plt.xlim(-2, 11)
 
 	plt.ylabel('Number', fontsize=20)
-	plt.xlabel('$r-W2$', fontsize=20)
+	plt.xlabel('$%s-W2$' % optband, fontsize=20)
 
 	plt.savefig('plots/color_dists.pdf')
 	plt.close('all')
@@ -102,6 +103,30 @@ def mips_fraction(medcolors, fracs):
 	plt.xlabel(r'$\langle r - W2 \rangle$', fontsize=20)
 
 	plt.savefig('plots/mips_det_fraction.pdf')
+	plt.close('all')
+
+
+def w1_w2_dists(tab):
+	plt.figure(figsize=(8,6))
+
+	total_w1_bins = np.histogram(tab['W1mag'], bins=50)[1]
+	total_w2_bins = np.histogram(tab['W2mag'], bins=50)[1]
+
+	cs = return_colorscheme(int(np.max(tab['bin'])))
+
+	for j in range(int(np.max(tab['bin']))):
+		binnedw1tab = tab[np.where(tab['bin'] == j + 1)]
+		plt.hist(binnedw1tab['W1mag'], bins=total_w1_bins, color=cs[j], histtype='step', linestyle='solid',
+		         label='W1', density=True)
+		binnedw2tab = tab[np.where(tab['bin'] == j + 1)]
+		plt.hist(binnedw2tab['W2mag'], bins=total_w2_bins, color=cs[j], histtype='step', linestyle='dashed',
+		         label='W2', density=True)
+
+	plt.legend()
+
+	plt.ylabel('Normalized Frequency', fontsize=20)
+	plt.xlabel('WISE Magnitude', fontsize=20)
+	plt.savefig('plots/w1_w2_dists.pdf')
 	plt.close('all')
 
 def w3_w4_dists(tab):
@@ -154,20 +179,33 @@ def fraction_with_redshifts(medcolors, fractions):
 	plt.close('all')
 
 def redshift_dists(zs_by_bin):
-	plt.figure(figsize=(8,7))
+	separate_panels = True
+	if separate_panels:
+		fig, axs = plt.subplots(nrows=len(zs_by_bin), ncols=1, sharex=True, figsize=(8, 6*len(zs_by_bin)))
+	else:
+		plt.figure(figsize=(8,7))
+
 
 	cs = return_colorscheme(len(zs_by_bin))
 
-	bin_edges = np.linspace(0., 4., 10)
-
-	for j in range(len(zs_by_bin)):
-		plt.hist(zs_by_bin[j], bins=bin_edges, color=cs[j], histtype='step', linestyle='solid')
-
+	#bin_edges = np.linspace(0., 4., 20)
 	zrange = np.linspace(0, 5, 100)
 	kern = lensingModel.dx_dz_lensing_kernel(zrange)
 	maxkern = np.max(kern)
 
-	plt.plot(zrange, 1/maxkern * kern, c='k', ls='--', label=r'Lensing Kernel $\frac{d \chi}{dz} W^{\kappa}$')
+	for j in range(len(zs_by_bin)):
+		if separate_panels:
+			axs[j].hist(zs_by_bin[j], bins=int(len(zs_by_bin[j]) / 5), color=cs[j], histtype='step', linestyle='solid',
+			            density=True)
+			axs[j].plot(zrange, 1 / maxkern * kern, c='k', ls='--', label=r'Lensing Kernel $\frac{d \chi}{dz} W^{'
+			                                                            r'\kappa}$')
+		else:
+			plt.hist(zs_by_bin[j], bins=bin_edges, color=cs[j], histtype='step', linestyle='solid', density=True)
+			if j == 0:
+				plt.plot(zrange, 1 / maxkern * kern, c='k', ls='--',
+				         label=r'Lensing Kernel $\frac{d \chi}{dz} W^{\kappa}$')
+
+
 	plt.legend(fontsize=15)
 
 	plt.xlim(0, 4)
@@ -198,12 +236,14 @@ def plot_ang_autocorrs(scales, wthetas):
 	plt.close('all')
 
 
-def plot_each_cf_fit(bin, scales, cf, cferr, cf_mod):
+def plot_each_cf_fit(bin, scales, cf, cferr, cf_mod, dm_mod=None):
 	plt.figure(figsize=(8,7))
 
 	plt.scatter(scales, cf, c='k')
 	plt.errorbar(scales, cf, yerr=cferr, c='k')
 	plt.plot(scales, cf_mod)
+	if dm_mod is not None:
+		plt.plot(scales, dm_mod, c='k', ls='dotted')
 	plt.xscale('log')
 	plt.yscale('log')
 	plt.xlabel(r'$\theta$ [deg]', fontsize=20)
@@ -290,13 +330,12 @@ def visualize_xcorr(densproj, lensproj):
 
 def depth_v_density(depths, densities, binno):
 
-
+	magdepths = -2.5 * (np.log10(5 / np.sqrt(depths)) - 9)
 	plt.figure(figsize=(8,7))
-	plt.scatter(depths, densities)
-	plt.xlabel('r PSF depth (arbitrary)', fontsize=20)
-	plt.ylabel('Source density', fontsize=20)
-	plt.ylim(5, 15)
-	plt.xscale('log')
+	plt.scatter(magdepths, densities)
+	plt.xlabel(r'$5 \sigma$ r PSF depth [AB mags]', fontsize=20)
+	plt.ylabel('Weight', fontsize=20)
+	#plt.ylim(5, 15)
 	plt.savefig('plots/depth_v_density/%s.pdf' % binno)
 	plt.close('all')
 
@@ -323,3 +362,107 @@ def density_vs_coord(ratios, bins, coordframe, lonlat):
 	plt.savefig('plots/rand_ratio.pdf')
 	plt.close('all')
 
+def mateos_plot(binnedtab, longband):
+	nondetcat = binnedtab[np.where(np.isnan(binnedtab['e_W%smag' % longband]))]
+	# stack w3 nondetections with LS forced photometry
+	stacked_w3mag = -2.5 * np.log10(np.nanmean(nondetcat['flux_W%s' % longband]))
+	avg_nondet_w2 = np.mean(nondetcat['W2mag'])
+	stacked_w2w3 = avg_nondet_w2 - stacked_w3mag
+	avg_nondet_w1w2 = np.mean(nondetcat['W1mag'] - nondetcat['W2mag'])
+
+	binnedtab = binnedtab[np.where(np.logical_not(np.isnan(binnedtab['e_W%smag' % longband])))]
+	binnum = int(binnedtab['bin'][0])
+	plt.close('all')
+	fig = plt.figure(figsize=(8, 7))
+	ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
+	ax.set_xlabel('W2 - W%s [Vega mags]' % longband, fontsize=20)
+	ax.set_ylabel('W1 - W2 [Vega mags]', fontsize=20)
+
+	ax.scatter_density(binnedtab['W2mag'] - binnedtab['W%smag' % longband], binnedtab['W1mag'] - binnedtab['W2mag'],
+	                   color=return_colorscheme(5)[binnum-1])
+	if longband == '3':
+		ax.scatter_density(nondetcat['W2mag'] - 10, nondetcat['W1mag'] - nondetcat['W2mag'],
+		                   color='k', alpha=0.5)
+
+	all_sources = Table.read('plots/mateos/cosmos_catwise_allwise.fits')
+	all_sources = all_sources[np.where(np.logical_not(np.isnan(all_sources['e_W%smag' % longband])))]
+	ax.scatter_density(all_sources['w2mpro'] - all_sources['W%smag' % longband], all_sources['w1mpro'] - all_sources[
+		'w2mpro'],
+	                   color='k')
+	ax.scatter(stacked_w2w3, avg_nondet_w1w2, c=return_colorscheme(5)[binnum-1], label='Stacked W%s Non-detections' %
+	                                                                                   longband)
+
+	if longband == '3':
+		ax.plot(np.linspace(1.958, 8, 50), 0.315 * np.linspace(2.186, 8, 50) + 0.796, ls='--', c='k', label='Mateos+12')
+		ax.plot(np.linspace(2.25, 8, 50), 0.315 * np.linspace(2.186, 8, 50) - 0.222, ls='--', c='k')
+		ax.plot(np.linspace(1.958, 2.25, 50), -3.172 * np.linspace(1.958, 2.25, 50) + 7.624, ls='--', c='k')
+		ax.arrow(5.25, 1, -.5, 0, width=0.01, head_width=.05, facecolor='k')
+	ax.text(0, -0.5, 'CatWISE sources in COSMOS', fontsize=15)
+	ax.legend(fontsize=15)
+	if longband == '3':
+		ax.set_xlim(-1, 7)
+	else:
+		ax.set_xlim(-1, 12)
+	ax.set_ylim(-1, 3)
+
+	plt.savefig('plots/mateos/%s_W%s.pdf' % (binnum, longband))
+	plt.close('all')
+
+
+def radio_detection_fraction(colors, fracs, survey):
+	plt.close('all')
+	plt.figure(figsize=(8, 7))
+	plt.scatter(colors, fracs, c=return_colorscheme(len(fracs)))
+	plt.xlabel(r'$r - W2$', fontsize=20)
+	#plt.ylabel('%s Detection Fraction' % survey, fontsize=20)
+	plt.savefig('plots/radio/%s.pdf' % survey)
+	plt.close('all')
+
+
+
+def donley_plot(matchedtab, fulltab, binnum):
+	plt.close('all')
+	fig = plt.figure(figsize=(8, 7))
+	ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
+	ax.set_xlabel('[3.6] - [5.8]$_{AB}$', fontsize=20)
+	ax.set_ylabel('[4.5] - [8.0]$_{AB}$', fontsize=20)
+
+	ax.scatter(matchedtab['ch1_4'] + 2.79 - matchedtab['ch3_4'] - 3.73, matchedtab['ch2_4'] + 3.26 -
+	           matchedtab['ch4_4'] - 4.40, color=return_colorscheme(5)[binnum - 1])
+	ax.scatter_density(fulltab['ch1_4'] + 2.79 - fulltab['ch3_4'] - 3.73,
+	                   fulltab['ch2_4'] + 3.26 - fulltab['ch4_4'] - 4.40, color='k', alpha=1, dpi=10)
+	ax.plot(np.linspace(0, 10, 50) / 2.5, (1.21 * np.linspace(0, 10, 50) / 2.5 - 0.27), c='k', ls='--',
+	        label='Donley+12')
+	ax.plot(np.linspace(0, 10, 50) / 2.5, (1.21 * np.linspace(0, 10, 50) / 2.5 + 0.27), c='k', ls='--')
+	ax.plot(np.linspace(-0.099, 0.347, 50), 0.375 * np.ones(50), c='k', ls='--')
+	ax.plot(np.linspace(-0.25, 10, 50), -0.5 * np.ones(50), c='k')
+	ax.vlines(-0.25, ymin=-0.5, ymax=0, colors='k')
+	ax.plot(np.linspace(-0.25, 10, 50), 2 * np.linspace(-0.25, 10, 50) + 0.5, c='k')
+	
+	plt.legend(fontsize=20)
+	ax.set_ylim(-2, 3)
+	ax.set_xlim(-1.5, 2)
+	plt.savefig('plots/donley/%s.pdf' % binnum)
+	plt.close('all')
+
+
+def stern05_plot(matchedtab, fulltab, binnum):
+	plt.close('all')
+	fig = plt.figure(figsize=(8, 7))
+	ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
+	ax.set_xlabel('[5.8] - [8.0]$_{Vega}$', fontsize=20)
+	ax.set_ylabel('[3.6] - [4.5]$_{Vega}$', fontsize=20)
+
+	ax.scatter(matchedtab['ch3_4'] - matchedtab['ch4_4'] , matchedtab['ch1_4'] -
+	           matchedtab['ch2_4'], color=return_colorscheme(5)[binnum - 1])
+	ax.scatter_density(fulltab['ch3_4'] - fulltab['ch4_4'],
+	                   fulltab['ch1_4'] - fulltab['ch2_4'], color='k', alpha=1, dpi=10)
+	ax.vlines(0.6, ymin=0.3, ymax=3, colors='k', ls='--')
+	ax.plot(np.linspace(0.6, 1.6, 10), 0.2 * np.linspace(0.6, 1.6, 10) + 0.18, c='k', ls='--')
+	ax.plot(np.linspace(1.6, 3, 10), 2.5 * np.linspace(1.6, 3, 10) - 3.5, c='k', ls='--')
+
+	plt.legend(fontsize=20)
+	ax.set_ylim(-0.5, 2)
+	ax.set_xlim(-1, 3)
+	plt.savefig('plots/stern/%s.pdf' % binnum)
+	plt.close('all')
