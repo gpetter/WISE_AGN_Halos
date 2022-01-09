@@ -17,17 +17,15 @@ from scipy.special import j0
 import astropy.constants as const
 import astropy.units as u
 
-import plotting
 import importlib
 import redshift_dists
 import resampling
 from source import bias_tools
-import hod_model
-importlib.reload(hod_model)
+
 importlib.reload(bias_tools)
 importlib.reload(resampling)
 importlib.reload(redshift_dists)
-importlib.reload(plotting)
+
 
 
 # define k space (includes little h)
@@ -78,6 +76,10 @@ def power_spec_at_zs(zs, read=True, dimensionless=False):
 
 # DiPompeo 2017
 def angular_corr_func(thetas, zs, dn_dz_1, dn_dz_2=None, hodparams=None, hodmodel=None):
+	import hod_model
+
+	importlib.reload(hod_model)
+	# if not doing a cross correlation, term is dn/dz^2
 	if dn_dz_2 is None:
 		dn_dz_2 = dn_dz_1
 
@@ -85,11 +87,15 @@ def angular_corr_func(thetas, zs, dn_dz_1, dn_dz_2=None, hodparams=None, hodmode
 	thetas = (thetas*u.deg).to('radian').value
 
 	if hodparams is not None:
+
 		onespec, twospec = hod_model.power_spectra_for_zs(k_grid, zs, hodparams, modeltype=hodmodel)
-
-
 		powspec = np.array(onespec) + np.array(twospec)
+
+
 		rs, xis = mcfit.P2xi(k_grid, lowring=True)(powspec, axis=1)
+		#rs = np.logspace(-3, 2.2, 500)
+		#xis = xi_of_r(rs)
+
 
 
 		u_grid = np.logspace(-5, 3, 300)
@@ -109,8 +115,6 @@ def angular_corr_func(thetas, zs, dn_dz_1, dn_dz_2=None, hodparams=None, hodmode
 			interpedxi = log_interp1d(rs, xis[j])(new_r_grid)
 			interpedxi[np.where(np.isnan(interpedxi))] = 0.
 			xi_at_r_grid.append(interpedxi)
-
-
 
 
 		firstintegral = np.trapz(xi_at_r_grid, x=u_grid, axis=1)
