@@ -26,17 +26,30 @@ def get_median_colors(tab):
 
 
 def cut_lowz(tab, bands):
-	x_colors = tab['dered_mag_%s' % bands[0]] - tab['W2mag']
-	y_colors = tab['dered_mag_%s' % bands[1]] - tab['W2mag']
+	x_colors = tab['%smag' % bands[0]] - tab['W2mag']
+	y_colors = tab['%smag' % bands[1]] - tab['W2mag']
 	tab = tab[np.where((y_colors > (x_colors * 0.8 + 0.4)) | (y_colors > (20 - (3 * x_colors))))]
 	return tab
 
 
-def filter_table(soln, bitmask=False, custom_mask=False, planckmask=False, w2cut=8, w1cut=None, pmsncut=None,
-                                                    sepcut=None, nbcut=None, lowzcut=False):
-	cat = Table.read('catalogs/derived/catwise_r90_ls.fits')
-	#cat = cat[np.where(cat['PSFDEPTH_R'] > 100)]
+# choose which magnitudes, AGN criteria, magnitude cuts, etc and perform masking
+def filter_table(soln, criterion, w2cut=8, w1cut=None, pmsncut=None, sepcut=None, nbcut=None, lowzcut=False,
+                    optband='r'):
+	cat = Table.read('catalogs/catwise_r75pm_ls.fits')
+	if criterion == 'r90':
+		alpha, beta, gamma = 0.65, 0.153, 13.86
+	elif criterion == 'r75':
+		alpha, beta, gamma = 0.486, 0.092, 13.07
+	else:
+		return False
 
+	cat = cat[np.where(((cat['W1%s' % soln] - cat['W2%s' % soln] > alpha) & (cat['W2%s' % soln] <= gamma))
+	                         | (cat['W1%s' % soln] - cat['W2%s' % soln] > alpha * np.exp(
+		beta * np.square(cat['W2%s' % soln] - gamma))))]
+
+	cat = cat[np.where(cat['W2%s' % soln] > w2cut)]
+	if w1cut is not None:
+		cat = cat[np.where(cat['W1%s' % soln] < w1cut)]
 
 
 	if pmsncut is not None:
@@ -46,43 +59,44 @@ def filter_table(soln, bitmask=False, custom_mask=False, planckmask=False, w2cut
 	if sepcut is not None:
 		cat['dered_mag_r'][np.where(cat['sep'] > sepcut)] = np.nan
 
+	masking.total_mask(150, 1, 1, 1, 1, 1, 0)
+
+	cat = masking.mask_tab(cat)
+	randcat = Table.read('catalogs/derived/ls_randoms_1_masked.fits')
+	randcat = masking.mask_tab(randcat)
+
 
 	newcat = Table()
 	newcat['RA'], newcat['DEC'] = cat['RA'], cat['DEC']
 	newcat['W1mag'], newcat['W2mag'] = cat['W1%s' % soln], cat['W2%s' % soln]
 	newcat['e_W1mag'], newcat['e_W2mag'] = cat['e_W1%s' % soln], cat['e_W2%s' % soln]
+	newcat['gmag'] = cat['dered_mag_g']
 	newcat['rmag'] = cat['dered_mag_r']
+	newcat['zmag'] = cat['dered_mag_z']
+	newcat['W3mag'] = cat['W3mag']
+	newcat['e_W3mag'] = cat['e_W3mag']
+	#newcat['forced_W3'] = -2.5 * np.log10(3.631e-6 / 31.674 * cat['snr_w3'] / np.sqrt(cat['psfdepth_w3']))
+	newcat['flux_W3'] = 3.631e-6 / 31.674 * cat['snr_w3'] / np.sqrt(cat['psfdepth_w3'])
+	newcat['flux_W4'] = 3.631e-6 / 8.363 * cat['snr_w4'] / np.sqrt(cat['psfdepth_w4'])
+	newcat['W4mag'] = cat['W4mag']
+	newcat['e_W4mag'] = cat['e_W4mag']
 	#newcat['r_depth'] = -2.5*(np.log10(5/np.sqrt(cat['PSFDEPTH_R']))-9)
 	newcat['detect'] = np.zeros(len(newcat))
-	newcat['detect'][np.where((newcat['rmag'] > 0) & (np.isfinite(newcat['rmag'])))] = 1
+	newcat['detect'][np.where((newcat['%smag' % optband] > 0) & (np.isfinite(newcat['%smag' % optband])))] = 1
+	#newcat[np.where(newcat['detect'] == 0)] = np.nan
 	newcat['ab_flags'] = cat['ab_flags']
 
 
-
-	newcat = newcat[np.where(newcat['W2mag'] > w2cut)]
-	if w1cut is not None:
-		newcat = newcat[np.where(newcat['W1mag'] < w1cut)]
-
-	newcat = newcat[np.where(((newcat['W1mag'] - newcat['W2mag'] > 0.65) & (newcat['W2mag'] <= 13.86))
-	            | (newcat['W1mag'] - newcat['W2mag'] > 0.65*np.exp(0.153*np.square(newcat['W2mag'] - 13.86))))]
-
-	randcat = Table.read('catalogs/derived/ls_randoms_1_masked.fits')
-
-	masking.total_mask(150, True, True, True)
-
-	newcat = masking.mask_tab(newcat)
-	randcat = masking.mask_tab(randcat)
-
 	if lowzcut:
-		newcat = cut_lowz(newcat, ['r', 'W2'])
+		newcat = cut_lowz(newcat, ['r', 'z'])
 
-	newcat.write('catalogs/derived/catwise_r90_filtered.fits', format='fits', overwrite=True)
+	newcat.write('catalogs/derived/catwise_filtered.fits', format='fits', overwrite=True)
 	randcat.write('catalogs/derived/ls_randoms_1_filtered.fits', format='fits', overwrite=True)
 
 
 
 # match to deep HSC data to get color distribution of optically undetected sources in main sample
-def undetected_dist(tab):
+def undetected_dist(tab, optband='r'):
 	coords = SkyCoord(tab['RA'] * u.deg, tab['DEC'] * u.deg)
 
 	hsctab = Table.read('catalogs/raw/r90_pm_hsc_dud.fits')
@@ -91,44 +105,55 @@ def undetected_dist(tab):
 
 	idx, hscidx, d2d, d3d = hsccoords.search_around_sky(coords, 1*u.arcsec)
 
-	rmags = hsctab['rmag'][hscidx]
+	optmags = hsctab['%smag' % optband][hscidx]
 	w2mags = tab['W2mag'][idx]
 
-	return rmags - w2mags - 3.313
+	return optmags - w2mags - 3.313
 
 
 
 
 
-def bin_sample(samplename, mode, nbins=3):
+def bin_sample(samplename, mode, optband='r', nbins=3):
 
-	cat = Table.read('catalogs/derived/catwise_r90_filtered.fits')
+	cat = Table.read('catalogs/derived/catwise_filtered.fits')
 
 	detectidx = np.where(cat['detect'].astype(np.bool))
 	nondetectidx = np.where(cat['detect'] == 0)
 
 	if mode == 'color':
 		cat['color'] = np.empty(len(cat))
-		cat['color'][detectidx] = cat['rmag'][detectidx] - cat['W2mag'][detectidx] - 3.313
+		cat['color'][detectidx] = cat['%smag' % optband][detectidx] - cat['W2mag'][detectidx] - 3.313
 		#cat['color'][nondetectidx] = cat['r_depth'][nondetectidx] - cat['W2mag'][nondetectidx] - 3.313
 		cat['color'][nondetectidx] = 99.
 
+
 		indicesbybin = bin_agn.bin_by_color(cat['color'], nbins)
-	cat['bin'] = np.zeros(len(cat))
+		nondet_colors = undetected_dist(cat[nondetectidx], optband)
+		cat['bin'] = np.zeros(len(cat))
 
-	for j in range(len(indicesbybin)):
-		cat['bin'][indicesbybin[j]] = j+1
+		for j in range(len(indicesbybin)):
+			cat['bin'][indicesbybin[j]] = j + 1
 
-	nondet_colors = undetected_dist(cat[nondetectidx])
+		plotting.plot_color_dists(cat, nondet_colors, optband)
+		plotting.plot_assef_cut(cat)
 
-	plotting.plot_color_dists(cat, nondet_colors)
-	plotting.plot_assef_cut(cat)
+	elif mode == 'gal_lat':
+		lons, lats = coord_transforms.sky_transform(cat['RA'], cat['DEC'], trans=['C', 'G'])
+		cat['bin'] = bin_agn.bin_by_gal_lat(lats) + 1
+
+
 	cat.write('catalogs/derived/%s_binned.fits' % samplename, format='fits', overwrite=True)
+
+
 
 
 def long_wavelength_properties(samplename, bands):
 	tab = Table.read('catalogs/derived/%s_binned.fits' % samplename)
 	medcolors = get_median_colors(tab)
+
+	if 'w1w2' in bands:
+		plotting.w1_w2_dists(tab)
 
 	if 'w3w4' in bands:
 		det_fracs_3, det_fracs_4 = [], []
@@ -160,13 +185,57 @@ def long_wavelength_properties(samplename, bands):
 			mips_mags.append(-2.5*np.log10(mipstab['flux'][idx[limit]]/(3631. * 1e6)))
 		plotting.mips_fraction(medcolors, det_fracs)
 		plotting.mips_dists(mips_mags)
+	if 'mateos' in bands:
+		for j in range(int(np.max(tab['bin']))):
+			binnedtab = tab[np.where(tab['bin'] == j + 1)]
+			plotting.mateos_plot(binnedtab, '3')
+			plotting.mateos_plot(binnedtab, '4')
+	if 'donley' in bands:
+		for j in range(int(np.max(tab['bin']))):
+			binnedtab = tab[np.where(tab['bin'] == j + 1)]
+			binnedtab = binnedtab[np.where((binnedtab['RA'] > 216.) & (binnedtab['RA'] < 218.88) &
+			            (binnedtab['DEC'] > 32.14) & (binnedtab['DEC'] < 36.05))]
+			tabcoords = SkyCoord(binnedtab['RA'] * u.deg, binnedtab['DEC'] * u.deg)
+			full_sdwfs_tab = Table.read('catalogs/bootes/sdwfs_irac.fits')
+			sdwfs_coords = SkyCoord(full_sdwfs_tab['RA'] * u.deg, full_sdwfs_tab['DEC'] * u.deg)
+			sdidx, d2d, d3d = tabcoords.match_to_catalog_sky(sdwfs_coords)
+			sdwfs_tab = full_sdwfs_tab[sdidx]
+			binnedtab = binnedtab[d2d < 2*u.arcsec]
+			sdwfs_tab = sdwfs_tab[d2d < 2*u.arcsec]
+
+			plotting.stern05_plot(sdwfs_tab, full_sdwfs_tab, j+1)
+			plotting.donley_plot(sdwfs_tab, full_sdwfs_tab, j+1)
+	if 'radio' in bands:
+		surveynames = ['LOTSS_DR1', 'FIRST', 'VLACOSMOS']
+
+		for survey in surveynames:
+			footprint = hp.read_map('../data/radio_cats/hpx_footprints/%s.fits' % survey)
+			nside = hp.npix2nside(len(footprint))
+			tab_in_footprint = tab[np.where(footprint[hp.ang2pix(nside, tab['RA'], tab['DEC'], lonlat=True)] == 1)]
+			radiotab = Table.read('../data/radio_cats/%s.fits' % survey)
+			radcoords = SkyCoord(radiotab['RA'] * u.deg, radiotab['DEC'] * u.deg)
+
+			colors, det_fraction = [], []
+			for j in range(int(np.max(tab['bin']))):
+				binnedtab = tab_in_footprint[np.where(tab_in_footprint['bin'] == j + 1)]
+				binnedcoords = SkyCoord(binnedtab['RA'] * u.deg, binnedtab['DEC'] * u.deg)
+
+				radidx, tabidx, d2d, d3d = binnedcoords.search_around_sky(radcoords, 5 * u.arcsec)
+				det_fraction.append(len(tabidx) / len(binnedtab))
+				colors.append(np.nanmean(binnedtab['color']))
+			plotting.radio_detection_fraction(colors, det_fraction, survey)
 
 
 
 
 
 
-def redshifts(samplename, z_sample='AGES'):
+
+
+
+
+
+"""def redshifts(samplename, z_sample='AGES'):
 	tab = Table.read('catalogs/derived/%s_binned.fits' % samplename)
 
 	z_fractions, zs_by_bin = [], []
@@ -254,9 +323,22 @@ def redshifts(samplename, z_sample='AGES'):
 
 
 	plotting.fraction_with_redshifts(get_median_colors(tab), z_fractions)
+	plotting.redshift_dists(zs_by_bin)"""
+
+
+
+def redshifts(samplename):
+	tab = Table.read('catalogs/derived/%s_binned.fits' % samplename)
+	z_fractions, zs_by_bin = [], []
+	for j in range(int(np.max(tab['bin']))):
+		binnedtab = tab[np.where(tab['bin'] == j + 1)]
+		frac, zs = redshift_dists.get_redshifts(binnedtab)
+		z_fractions.append(frac)
+		zs_by_bin.append(zs)
+
+
+	plotting.fraction_with_redshifts(get_median_colors(tab), z_fractions)
 	plotting.redshift_dists(zs_by_bin)
-
-
 
 
 
