@@ -9,21 +9,25 @@ import scipy.interpolate
 from colossus.lss import mass_function
 import astropy.units as u
 from colossus.halo import concentration
-import time
+
 from scipy import special
 
 from halotools.empirical_models import PrebuiltHodModelFactory
 from scipy.special import sici
-cosmo = cosmology.setCosmology('planck18')
+import halomod
+
+
+cosmo = cosmology.setCosmology('planck15')
 apcosmo = cosmo.toAstropy()
 
 
 
 param_keys = {'logMmin': 0, 'alpha': 1, 'logM1': 2}
 
-mass_grid = np.logspace(10.5, 15, 50)
+mass_grid = np.logspace(9., 15, 50)
 
 r_grid = np.logspace(-2, 6, 10000) * (u.kpc / u.littleh)
+ukms = np.load('power_spectra/ukm.npy', allow_pickle=True)
 
 #k_grid = np.logspace(-5, 3, 1000) * (u.littleh / u.Mpc)
 
@@ -34,12 +38,33 @@ def log_interp1d(xx, yy, kind='linear'):
 	log_interp = lambda zz: np.power(10.0, lin_interp(np.log10(zz)))
 	return log_interp
 
+# mass-concentration relation
 def concentration_from_mass(masses, z):
 	return concentration.concentration(masses, '200c', z, model='ludlow16')
 
+def write_ukm():
+	lnkmin = np.log(10 ** (-5.))
+	lnkmax = np.log(10 ** (3.))
+	dlnk = (lnkmax - lnkmin) / 1000.
+	zlist = np.linspace(0, 4, 400)
+	uks = []
+	for z in zlist:
+		hm_smt3 = halomod.TracerHaloModel(
+			z=z, cosmo_model='Planck15',
+			Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
+			hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.}, takahashi=False,
+			exclusion_model=None, halo_concentration_model='Ludlow16Empirical', mdef_model='SOCritical',
+			hm_dlog10k=0.008, dlog10m=0.12, lnk_min=lnkmin, lnk_max=lnkmax, dlnk=dlnk,
+			force_1halo_turnover=False, mdef_params={'overdensity': 200}
+		)
+		uks.append(hm_smt3.halo_profile_ukm)
+	with open('power_spectra/ukm.npy', 'wb') as f:
+		np.save(f, np.array(uks))
+
+
 
 # take Fourier transform of NFW density profile
-def transformed_nfw_profile(k_grid, masses, z, analytic=True):
+def transformed_nfw_profile(k_grid, masses, z, analytic=False):
 	#c = concentration_from_mass(m, z)
 	#p_nfw = profile_nfw.NFWProfile(M=m, c=c, z=z, mdef='200c')
 
@@ -48,23 +73,45 @@ def transformed_nfw_profile(k_grid, masses, z, analytic=True):
 	# more clear in Equation 81 in Cooray+Sheth 2002
 	if analytic:
 		cs = concentration_from_mass(masses, z)
+
 		rs_s = []
 		for j in range(len(mass_grid)):
-			rs_s.append(profile_nfw.NFWProfile(M=mass_grid[j], c=cs[j], z=z, mdef='200c').fundamentalParameters(
-				M=mass_grid[j], c=cs[j], z=z, mdef='200c')[1])
+			rs_s.append(profile_nfw.NFWProfile.fundamentalParameters(
+				M=mass_grid[j], c=cs[j], z=0, mdef='200c')[1])
 
 
 		prefactor = 1 / (np.log(1 + cs) - cs / (1 + cs))
 		#rho_s, r_s = p_nfw.fundamentalParameters(M=m, c=c, z=z, mdef='200c')
-		rs_s = np.array(rs_s) * u.kpc / u.littleh
-		k_r_s = (np.outer(k_grid, rs_s.to(u.Mpc / u.littleh))).value
+		rs_s = (np.array(rs_s) * u.kpc / u.littleh).to(u.Mpc / u.littleh) * np.pi
 
-		term1 = np.sin(k_r_s) * (sici((1+cs) * k_r_s)[0] - sici(k_r_s)[0]) - np.sin(cs * k_r_s) / ((1 + cs) * k_r_s) + \
-		        np.cos(k_r_s) * (sici((1 + cs) * k_r_s)[1] - sici(k_r_s)[1])
+		k_r_s = (np.outer(k_grid, rs_s)).value
+
+		# sin and cosine integrals of terms
+		si_1c_krs, ci_1c_krs = sici((1+cs) * k_r_s)
+		si_krs, ci_krs = sici(k_r_s)
+
+		term1 = np.sin(k_r_s) * (si_1c_krs - si_krs) - np.sin(cs * k_r_s) / ((1 + cs) * k_r_s) + \
+		        np.cos(k_r_s) * (ci_1c_krs - ci_krs)
 		uk = prefactor * term1
+	else:
+		"""lnkmin = np.log(10**(-5.))
+		lnkmax = np.log(10**(3.))
+		dlnk = (lnkmax - lnkmin) / 1000.
+
+		hm_smt3 = halomod.TracerHaloModel(
+			z=z, cosmo_model='Planck15',
+			Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
+			hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.}, takahashi=False,
+			exclusion_model=None, halo_concentration_model='Ludlow16Empirical', mdef_model='SOCritical',
+			hm_dlog10k=0.008, dlog10m=0.12, lnk_min=lnkmin, lnk_max=lnkmax, dlnk=dlnk,
+			force_1halo_turnover=False, mdef_params={'overdensity': 200}
+		)
+		uk = hm_smt3.halo_profile_ukm"""
+
+		uk = ukms[np.argmin(np.abs(z - np.linspace(0, 4, 400)))]
 
 	# !!!! this method doesn't work right now, use analytic form
-	else:
+	"""else:
 		rho_of_r = p_nfw.density(r=r_grid.value) * (u.solMass * u.littleh ** 2) * (1 / (u.kpc ** 3)).to(
 			1 / (u.Mpc ** 3))
 
@@ -75,10 +122,11 @@ def transformed_nfw_profile(k_grid, masses, z, analytic=True):
 
 		# interpolate result onto k grid
 		uk_interp = log_interp1d(k, uk)
-		uk = uk_interp(k_grid.value) * (u.solMass / u.littleh) / m
+		uk = uk_interp(k_grid.value) * (u.solMass / u.littleh) / m"""
 
 
 	return uk
+
 
 
 # number density of halos at z per log mass interval
@@ -89,10 +137,10 @@ def halo_mass_function(masses, z):
 
 
 
-def two_param_hod(masses, logm_min, alpha):
+"""def two_param_hod(masses, logm_min, alpha):
 	n_cen = np.heaviside(np.log10(masses) - logm_min, 1)
 	n_sat = (n_cen * (masses / (10 ** logm_min)) ** alpha)
-	return n_cen, n_sat
+	return n_cen, n_sat"""
 
 
 # Zheng 2005 model
@@ -104,6 +152,11 @@ def three_param_hod(masses, logm_min, alpha, logm1):
 	n_sat[np.where(np.log10(masses) <= logm_min)] = 0.
 
 
+	return n_cen, n_sat
+
+def two_param_hod(masses, logm_min, alpha):
+	# fix M1 to be 20x M_min (Georgakakis 2018)
+	n_cen, n_sat = three_param_hod(masses, logm_min, alpha, logm_min + np.log10(15))
 	return n_cen, n_sat
 
 
@@ -279,21 +332,131 @@ def redshift_averaged_power_spectra(k_grid, zs, dndz, params, modeltype='zheng07
 
 	return avg_onehalo, avg_twohalo
 
-def halomod_powspec():
-	import halomod
-	hm_smt3 = halomod.TracerHaloModel(
-		z=np.random.rand(1)[0],  # Redshift
-		Mmin=9, Mmax=15., transfer_model='EH', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
-		hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.},
-		exclusion_model=None, halo_concentration_model='Ludlow16', mdef_model='SOCritical', hm_dlog10k=0.008,
-		force_1halo_turnover=False
-	)
+def compare_angcfs():
+
+	import clusteringModel
+	import importlib
+	importlib.reload(clusteringModel)
+
 	hm2 = halomod.integrate_corr.AngularCF(
-		z=np.random.rand(1)[0],  # Redshift
-		Mmin=9, Mmax=15., transfer_model='EH', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
+		z=1.5,
+		zmin=1.49, zmax=1.51, znum=2,  # Redshift
+		Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
+		theta_min=(1e-3)/180.*np.pi, theta_max=1/180.*np.pi,
 		hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.},
 		exclusion_model=None, halo_concentration_model='Ludlow16', mdef_model='SOCritical', hm_dlog10k=0.008,
-		force_1halo_turnover=False)
+		force_1halo_turnover=True)
+
+	mymodel = clusteringModel.angular_corr_func(np.logspace(-3, 0, 30), np.array([1.49, 1.51]), np.array([50, 50]),
+		hodparams=[12., 1., 12.5], hodmodel='3param')
+
+	plt.figure(figsize=(8,7))
+	plt.plot(hm2.theta*180./np.pi, hm2.angular_corr_gal, label='halomod')
+
+
+	#plt.plot(hm_smt3.r, hm_smt3.corr_1h_auto_tracer, label='1h')
+	#plt.plot(hm_smt3.r, hm_smt3.corr_2h_auto_tracer, label='2h')
+	plt.plot(np.logspace(-3, 0, 30), mymodel, label='my 1h')
+
+	#plt.plot(np.logspace(-3, 0, 30), mymodel, label='my model')
+	plt.xscale('log')
+	plt.yscale('log')
+	plt.ylim(1e-2, 1e3)
+	plt.legend()
+	plt.xlabel(r'$\theta$', fontsize=20)
+	plt.ylabel(r'$w(\theta)$', fontsize=20)
+	plt.savefig('plots/halomod/modelcf_test.pdf')
+	plt.close('all')
+
+	plt.close('all')
+
+def compare_ukm():
+	plt.figure(figsize=(8, 7))
+	lnkmin = np.log(10 ** (-5.))
+	lnkmax = np.log(10 ** (3.))
+	dlnk = (lnkmax - lnkmin) / 1000.
+	hm_smt3 = halomod.TracerHaloModel(
+		z=3., cosmo_model='Planck15', halo_profile_model="NFW", dlog10m=0.12, lnk_min=np.log(10 ** (-5.)),
+		lnk_max=np.log(10 ** (3.)), Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5,
+		hm_logk_max=3, dlnk=dlnk,
+		hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.}, takahashi=False,
+		exclusion_model=None, halo_concentration_model='Ludlow16Empirical', mdef_model='SOCritical', hm_dlog10k=0.008,
+		force_1halo_turnover=False, mdef_params={'overdensity': 200}
+	)
+	k_grid = hm_smt3.k_hm * u.littleh / u.Mpc
+	#from halomod.concentration import Ludlow16
+	#lud = Ludlow16()
+	#nf = halomod.profiles.NFW(cm_relation=lud)
+	#print(nf.scale_radius(m=1e12, at_z=True))
+
+	ukm = transformed_nfw_profile(k_grid, mass_grid, 3)
+	#ukm2 = transformed_nfw_profile(k_grid, mass_grid, 2)
+
+	plt.plot(k_grid, ukm[:, 0])
+	#plt.plot(k_grid, ukm2[:, 0])
+	plt.plot(hm_smt3.k, hm_smt3.halo_profile_ukm[:, 0], c='k', ls='--')
+
+
+	plt.legend()
+	plt.yscale('log')
+	plt.xscale('log')
+	plt.xlabel('$k$', fontsize=20)
+	plt.ylabel('$u(k, M)$', fontsize=20)
+	plt.xlim(1e-1, 1e4)
+	plt.ylim(1e-3, 2)
+	plt.savefig('plots/halomod/power_spectra.pdf')
+	plt.close('all')
+
+
+def compare_nfwruns():
+	plt.figure(figsize=(8, 7))
+	hm_smt3 = halomod.TracerHaloModel(
+		z=0., cosmo_model='Planck15',
+		Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
+		hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.}, takahashi=False,
+		exclusion_model=None, halo_concentration_model='Ludlow16Empirical', mdef_model='SOCritical', hm_dlog10k=0.008,
+		force_1halo_turnover=False, mdef_params={'overdensity': 200}
+	)
+
+	plt.plot(np.logspace(-2, 0, 100), 1000 * profile_nfw.NFWProfile(M=1e12, c=concentration_from_mass(np.array([1e12]),
+	                                                                                                  0)[0],
+	                                                                z=0, mdef='200c').density(np.logspace(-5, -2, 100)),
+	         label='my model')
+	plt.plot(hm_smt3.r, hm_smt3.halo_profile.rho(hm_smt3.r, np.array([1e12])),
+	         c=concentration_from_mass(np.array([1e12]),
+	                                   0)[0])
+
+	plt.legend()
+	plt.yscale('log')
+	plt.xscale('log')
+	plt.xlabel('$k$', fontsize=20)
+	plt.ylabel('$u(k, M)$', fontsize=20)
+	# plt.ylim(1e-1, 1e1)
+	plt.savefig('plots/halomod/nfw.pdf')
+	plt.close('all')
+
+def compare_powspec():
+	plt.figure(figsize=(8, 7))
+	hm_smt3 = halomod.TracerHaloModel(
+		z=0., cosmo_model='Planck15',
+		Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
+		hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.}, takahashi=False,
+		exclusion_model=None, halo_concentration_model='Ludlow16Empirical', mdef_model='SOCritical', hm_dlog10k=0.008,
+		force_1halo_turnover=False, mdef_params={'overdensity': 200}
+	)
+	k_grid = hm_smt3.k_hm * u.littleh / u.Mpc
+	onepk, twopk = redshift_averaged_power_spectra(k_grid, [2, 2], [0.5, 0.5], [12., 1., 12.5], '3param')
+
+
+	#plt.plot(hm_smt3.k_hm, hm_smt3.power_auto_tracer, c='b')
+
+	#totpk = onepk + twopk
+	#plt.plot(k_grid, totpk / hm_smt3.power_auto_tracer)
+	#plt.plot(k_grid, totpk, c='k', ls='--')
+	#plt.plot(k_grid, onepk, c='k', ls='-.')
+	#plt.plot(hm_smt3.k_hm, hm_smt3.power_1h_auto_tracer, label='HALOMOD-1h z=2', linewidth=5)
+	#plt.plot(k_grid, onepk, c='k', ls='--', label='my 1h z=2')
+	#plt.plot(hm_smt3.k, hm_smt3.halo_profile_ukm[:,0], linewidth=5, label='HALOMOD z=0')
 
 
 def plot_hod(params, modeltype):
@@ -317,29 +480,8 @@ def plot_hod(params, modeltype):
 
 
 
-def plot_both_pow_specs(k_grid, params, modeltype):
-
-	pk = cosmo.matterPowerSpectrum(k_grid.value, 0)
-	onepk, twopk = redshift_averaged_power_spectra(k_grid, [0.01,0.01], [0.5, 0.5], params, modeltype)
-	totpk = onepk + twopk
-
-	plt.figure(figsize=(8,7))
-	plt.plot(k_grid, pk, c='r', ls='-', label='$P_{mm}$')
-	plt.plot(k_grid, onepk, c='k', ls='--')
-	plt.plot(k_grid, twopk, c='k', ls='-.')
-	plt.plot(k_grid, totpk, c='k', ls='-')
-
-	#plt.plot(hm_smt3.k_hm, hm_smt3.power_2h_auto_tracer, c='b')
 
 
-	plt.legend(fontsize=20)
-	plt.yscale('log')
-	plt.xscale('log')
-	plt.xlabel('$k$ [h/Mpc]', fontsize=20)
-	plt.ylabel('$P_k$', fontsize=20)
-	plt.ylim(1e-5, 1e5)
-	plt.savefig('plots/power_spectra.pdf')
-	plt.close('all')
 
 
 #plot_hod([12., 1, 12.5], modeltype='3param')
