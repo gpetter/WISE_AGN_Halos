@@ -23,7 +23,10 @@ def montecarlo_spearman(xs, ys, yerrs):
 
 
 def bin_on_sky(ras, decs, njackknives, nside=None):
-	test_nsides = np.linspace(1, 50, 100)
+	from sklearn import cluster
+	import time
+	import matplotlib.pyplot as plt
+	"""test_nsides = np.linspace(1, 50, 100)
 	area_as_func_of_nside = hp.nside2pixarea(test_nsides, degrees=True)
 
 	lowresdensity = healpixhelper.healpix_density_map(ras, decs, 32)
@@ -40,7 +43,53 @@ def bin_on_sky(ras, decs, njackknives, nside=None):
 
 	pixidxs = hp.ang2pix(nside_for_area, ras, decs, lonlat=True)
 
-	return pixidxs, nside_for_area
+	return pixidxs, nside_for_area"""
+	nsides = 64
+	occupiedpix = hp.ang2pix(nside=nsides, theta=ras, phi=decs, lonlat=True)
+	uniquepix = np.unique(occupiedpix)
+	hp_ra, hp_dec = hp.pix2ang(nside=nsides, ipix=uniquepix, lonlat=True)
+	weighted_kmeans = False
+
+	if weighted_kmeans:
+		# Apply weights by adding more of the same pixels to the array
+		hp_ra_w = np.copy(hp_ra)
+		hp_dec_w = np.copy(hp_dec)
+		for i in range(1, 20):
+			mask = np.round(density / 50.) == i
+			for j in range(i - 1):  # i-1 because there is already one copy
+				hp_ra_w = np.concatenate([hp_ra_w, hp_ra[mask]])
+				hp_dec_w = np.concatenate([hp_dec_w, hp_dec[mask]])
+		print(len(hp_ra))
+		print(len(hp_ra_w))
+		coords = np.concatenate([[hp_ra_w], [hp_dec_w]])
+		coords = coords.T
+	else:
+		coords = np.concatenate([[hp_ra], [hp_dec]])
+		coords = coords.T
+	n_clusters = 100
+
+	kmeans = cluster.KMeans(n_clusters=n_clusters, n_init=10)
+	t0 = time.time()
+	kmeans.fit(coords)
+	elapsed_time = time.time() - t0
+	print('time %.2fs' % (elapsed_time))
+
+	if weighted_kmeans:
+		labels = kmeans.labels_[:len(hp_ra)]
+	else:
+		labels = kmeans.labels_
+	plt.figure(figsize=(12, 8))
+	#plt.scatter(hp_ra, hp_dec, c=labels, s=5, cmap=plt.cm.nipy_spectral)
+	blankmap = hp.UNSEEN * np.ones(hp.nside2npix(nsides))
+	blankmap[uniquepix] = labels
+	hp.mollview(blankmap, cmap=plt.cm.nipy_spectral)
+	# plt.axis([360, 0, -21, 36])
+	plt.savefig('plots/jackknives.pdf')
+	plt.close('all')
+
+
+
+
 
 
 def bootstrap_sky_bins(ras, decs, refras, refdecs, randras, randdecs, njackknives):
