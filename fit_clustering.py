@@ -31,14 +31,21 @@ def fit_clustering_of_bin(binnum, samplename, mode='bias'):
 	midzs, dndz = redshift_dists.redshift_dist(zs, nbins=10)
 	scales = np.load('clustering/scales.npy', allow_pickle=True)
 
+	# either fit correlation function with HOD framework
 	if mode == 'hod':
-		mcmc.sample_space(nwalkers=32, ndim=3, anglebins=scales, y=w, yerr=werr, zs=midzs, dndz=dndz,
+		mcmc.sample_space(nwalkers=32, ndim=3, niter=500, anglebins=scales, y=w, yerr=werr, zs=midzs, dndz=dndz,
 		                  modeltype='3param')
 		modcf = clusteringModel.angular_corr_func_in_bins(scales, midzs, dndz, hodparams=[12., 1., 12.5],
 		                                                  hodmodel='3param')
 
-		plotting.plot_each_cf_fit(binnum, np.logspace(-3, 0, len(modcf)), w, werr, modcf)
 
+		dm_cf = clusteringModel.angular_corr_func_in_bins(scales, midzs, dndz)
+		##### FIXXX the scales to be averages in bins !!!!!!!!!!!!!
+		plotting.plot_each_cf_fit(binnum, np.logspace(np.log10(np.min(scales)), np.log10(np.max(scales)), len(modcf)),
+		                          w, werr, modcf, dm_mod=dm_cf)
+
+
+	# or just fit the two-halo term as a biased dark matter tracer
 	else:
 
 		b, b_err = clusteringModel.fit_bias(scales, w, werr, midzs, dndz, mode=mode)
