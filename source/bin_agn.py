@@ -13,6 +13,7 @@ def bin_by_color(colors, nbins):
 
 
 	colorbins = pd.qcut(colors, nbins, retbins=True)[1]
+	# add buffer to last bin edge
 	colorbins[len(colorbins) - 1] = colorbins[len(colorbins) - 1] + 0.001
 	for j in range(nbins):
 		binidxs[j] += list(
@@ -21,6 +22,10 @@ def bin_by_color(colors, nbins):
 
 	return binidxs
 
+def bin_by_gal_lat(lats):
+	bin_edges = np.array([10., 30., 50., 70., 90.])
+	idcs = np.digitize(np.abs(lats), bin_edges)
+	return idcs
 
 
 def bin_by_radio(rls):
