@@ -1,13 +1,42 @@
 
-from Corrfunc.mocks.DDrppi_mocks import DDrppi_mocks
+
 from Corrfunc.mocks.DDtheta_mocks import DDtheta_mocks
-from Corrfunc.utils import convert_3d_counts_to_cf, convert_rp_pi_counts_to_wp
+from Corrfunc.utils import convert_3d_counts_to_cf
 import myCorrfunc
 import numpy as np
 import importlib
 importlib.reload(myCorrfunc)
 
+def data_counts(scales, ras, decs, weights, fulldict=True):
+	dd = DDtheta_mocks(1, 1, scales, ras, decs, weights1=weights)
+	if fulldict:
+		return dd
+	else:
+		if np.max(dd['weightavg']) > 0:
+			return dd['npairs'] * dd['weightavg']
+		else:
+			return dd['npairs']
 
+def data_random_counts(scales, ras, decs, randras, randdecs, weights, randweights, fulldict=True):
+	dr = DDtheta_mocks(0, 1, scales, ras, decs, RA2=randras, DEC2=randdecs, weights1=weights,
+	              weights2=randweights)
+	if fulldict:
+		return dr
+	else:
+		if np.max(dr['weightavg']) > 0:
+			return dr['npairs'] * dr['weightavg']
+		else:
+			return dr['npairs']
+
+def random_counts(scales, randras, randdecs, randweights, fulldict=True):
+	rr = DDtheta_mocks(1, 1, scales, randras, randdecs, weights1=randweights)
+	if fulldict:
+		return rr
+	else:
+		if np.max(rr['weightavg']) > 0:
+			return rr['npairs'] * rr['weightavg']
+		else:
+			return rr['npairs']
 
 def angular_corr_from_coords(ras, decs, randras, randdecs, scales, weights=None, randweights=None,
                     nthreads=1, randcounts=None):
@@ -28,7 +57,9 @@ def angular_corr_from_coords(ras, decs, randras, randdecs, scales, weights=None,
 	wtheta = convert_3d_counts_to_cf(len(ras), len(ras), len(randras), len(randras), DD_counts, DR_counts,
 	                                 DR_counts, RR_counts)
 
-	return wtheta
+	poisson_err = np.sqrt(2 * np.square(1 + wtheta) / DD_counts['npairs'])
+
+	return wtheta, poisson_err
 
 
 # angular cross correlation

@@ -9,6 +9,8 @@ import healpixhelper
 import importlib
 importlib.reload(healpixhelper)
 
+# take a binary mask and properly downgrade it to a lower resolution, expanding the mask to cover all pixels which
+# touch bad pixels in the high res map
 def downgrade_mask(mask, newnside):
 	mask_lowres_proper = hp.ud_grade(mask.astype(float), nside_out=newnside).astype(float)
 	mask_lowres_proper = np.where(mask_lowres_proper == 1., True, False).astype(bool)
@@ -19,13 +21,8 @@ def ls_depth_mask(nside, galactic=False):
 
 	# read first random catalog
 	tab = Table.read('catalogs/randoms/ls_randoms/ls_randoms_1.fits')
-	tab = tab['RA', 'DEC', 'PSFDEPTH_R', 'EBV', 'WISEMASK_W1', 'WISEMASK_W2']
+	tab = tab['RA', 'DEC', 'PSFDEPTH_R', 'EBV', 'WISEMASK_W1', 'WISEMASK_W2', 'MASKBITS']
 
-	# append other random catalogs to first one
-	for j in range(2, 5):
-		newtab = Table.read('catalogs/randoms/ls_randoms/ls_randoms_%s.fits' % j)
-		newtab = newtab['RA', 'DEC', 'PSFDEPTH_R', 'EBV', 'WISEMASK_W1', 'WISEMASK_W2']
-		tab = vstack((tab, newtab))
 
 	if galactic:
 		lons, lats = healpixhelper.equatorial_to_galactic(tab['RA'], tab['DEC'])
@@ -34,18 +31,50 @@ def ls_depth_mask(nside, galactic=False):
 
 	# calculate average depth field from randoms
 	avg_depth = healpixhelper.healpix_average_in_pixels(lons, lats, nside, tab['PSFDEPTH_R'])
+	lons_zero_depth, lats_zero_depth = list(lons[np.where(tab['PSFDEPTH_R'] == 0)]), \
+	                                   list(lats[np.where(tab['PSFDEPTH_R'] ==0)])
 	# and average E(B-V) values
 	ebvs = healpixhelper.healpix_average_in_pixels(lons, lats, nside, tab['EBV'])
-	w1mask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['WISEMASK_W1'])
-	w2mask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['WISEMASK_W2'])
-	wisemask = hp.ud_grade(w1mask + w2mask, nside)
-
-
 	hp.write_map('masks/ls_depth.fits', avg_depth, overwrite=True)
 	hp.write_map('masks/ebv.fits', ebvs, overwrite=True)
+
+	w1mask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['WISEMASK_W1'])
+	w2mask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['WISEMASK_W2'])
+	lsmask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['MASKBITS'])
+	del tab
+
+
+	# loop through many random catalogs, keep running total of pixels with masked randoms inside
+	# need to use many millions of randoms to properly sample bad pixels
+	for j in range(2, 5):
+		newtab = Table.read('catalogs/randoms/ls_randoms/ls_randoms_%s.fits' % j)
+		newtab = newtab['RA', 'DEC', 'PSFDEPTH_R', 'EBV', 'WISEMASK_W1', 'WISEMASK_W2', 'MASKBITS']
+
+		if galactic:
+			lons, lats = healpixhelper.equatorial_to_galactic(newtab['RA'], newtab['DEC'])
+		else:
+			lons, lats = newtab['RA'], newtab['DEC']
+
+		w1mask += healpixhelper.healpix_average_in_pixels(lons, lats, 1024, newtab['WISEMASK_W1'])
+		w2mask += healpixhelper.healpix_average_in_pixels(lons, lats, 1024, newtab['WISEMASK_W2'])
+		lsmask += healpixhelper.healpix_average_in_pixels(lons, lats, 1024, newtab['MASKBITS'])
+		lons_zero_depth += list(lons[np.where(newtab['PSFDEPTH_R'] == 0)])
+		lats_zero_depth += list(lats[np.where(newtab['PSFDEPTH_R'] == 0)])
+
+		#tab = vstack((tab, newtab))
+
+	zero_depth_map = healpixhelper.healpix_density_map(lons_zero_depth, lats_zero_depth, 1024)
+
+	wisemask = hp.ud_grade(w1mask + w2mask, nside)
+	lsmask = hp.ud_grade(lsmask, nside)
+
+
+	hp.write_map('masks/zerodepth_mask.fits', zero_depth_map, overwrite=True)
 	hp.write_map('masks/wisemask.fits', wisemask, overwrite=True)
+	hp.write_map('masks/ls_badmask.fits', lsmask, overwrite=True)
 
 
+# deprecated: masking obviously bad regions chosen by hand
 def mask_bad_data(nside):
 	ls, bs = hp.pix2ang(nside, np.arange(hp.nside2npix(nside)), lonlat=True)
 	ras, decs = healpixhelper.galactic_to_equatorial(ls, bs)
@@ -77,6 +106,7 @@ def mask_bad_data(nside):
 	return mask
 
 
+# deprecated: masking circular regions near objects chosen by hand
 def mask_near_sources(nside, sources):
 	src_tab = Table.read('masks/assef_cats/%s.fits' % sources)
 	print(sources)
@@ -93,7 +123,8 @@ def mask_near_sources(nside, sources):
 
 
 
-
+# replicate masking procedure used in Assef+18 to remove regions of likely contamination by red objects
+# including planetary nebulae, nearby galaxies, HII regions
 def assef_mask(nside):
 	#tabcoord = SkyCoord(tab['RA'] * u.deg, tab['DEC'] * u.deg)
 	#ls, bs = tabcoord.galactic.l, tabcoord.galactic.b
@@ -117,6 +148,22 @@ def assef_mask(nside):
 	hp.write_map('masks/assef.fits', passesallmasks, overwrite=True)
 
 
+# mask regions around bright infrared stars
+def mask_bright_stars(nside):
+	bright_w3_cat = Table.read('catalogs/bright_sources/bright_w3.fits')
+	very_bright_w3_cat = bright_w3_cat[np.where(bright_w3_cat['w3mpro'] < -2)]
+	brightlons, brightlats = healpixhelper.equatorial_to_galactic(very_bright_w3_cat['RA'], very_bright_w3_cat['DEC'])
+	vecs = hp.ang2vec(brightlons, brightlats, lonlat=True)
+	mask = np.ones(hp.nside2npix(nside))
+	for j in range(len(very_bright_w3_cat)):
+		mask[hp.query_disc(nside, vecs[j], 0.5 * np.abs(very_bright_w3_cat['w3mpro'][j] * np.pi / 180.),
+		                   inclusive=True)]	= 0
+
+	hp.write_map('masks/bright_mask.fits', mask, overwrite=True)
+
+
+
+
 """def planck_mask(tab):
 	lons, lats = healpixhelper.equatorial_to_galactic(tab['RA'], tab['DEC'])
 	planckmask = hp.read_map('lensing_maps/planck/mask.fits')
@@ -124,11 +171,22 @@ def assef_mask(nside):
 	tab = tab[np.where(planckmask[pix] == 1)]
 	return tab
 """
+
+
 def write_masks(nside):
 	ls_depth_mask(nside, galactic=True)
-	assef_mask(nside)
+	#assef_mask(nside)
+	mask_bright_stars(nside)
 
-def total_mask(depth_cut, assef, unwise, planck):
+
+def decode_bitmask(bitmasks):
+	remainder = bitmasks
+	for j in range(0, 14):
+		largest_bit = np.floor(np.log2(bitmasks))
+		remainder -= largest_bit
+
+
+def total_mask(depth_cut, assef, unwise, planck, bright, ebv, ls_mask, zero_depth_mask, gal_lat_cut=0):
 
 	mask = hp.read_map('masks/ls_depth.fits', dtype=np.float64)
 	mask[np.where(np.logical_not(np.isfinite(mask)))] = 0
@@ -152,6 +210,27 @@ def total_mask(depth_cut, assef, unwise, planck):
 		if len(lensmask) != len(mask):
 			lensmask = downgrade_mask(lensmask, hp.npix2nside(len(mask)))
 		mask = mask * lensmask
+
+	if bright:
+		brightmask = hp.read_map('masks/bright_mask.fits')
+		mask[np.where(brightmask == 0)] = 0
+
+	if ebv:
+		ebvmask = hp.read_map('masks/ebv.fits')
+		mask[np.where(ebvmask > 0.2)] = 0
+
+	if ls_mask:
+		lsbadmask = hp.read_map('masks/ls_badmask.fits')
+		mask[np.where(lsbadmask > 0)] = 0
+
+	if zero_depth_mask:
+		zerodepth = hp.read_map('masks/zerodepth_mask.fits')
+		mask[np.where(zerodepth > 0)] = 0
+
+	if gal_lat_cut > 0:
+		gallon, gallat = hp.pix2ang(hp.npix2nside(len(mask)), np.arange(len(mask)), lonlat=True)
+		mask[np.where(np.abs(gallat) > gal_lat_cut)] = 0
+
 
 	hp.write_map('masks/union.fits', mask, overwrite=True)
 

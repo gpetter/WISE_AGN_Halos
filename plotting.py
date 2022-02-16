@@ -385,16 +385,28 @@ def bias_v_color(medcolors, bias, biaserrs):
 	plt.close('all')
 
 
-def mass_v_color(medcolors, mass, massloerrs, massuperrs):
+def mass_v_color(samplename):
 	plt.close('all')
 	plt.figure(figsize=(8, 7))
-	cs = return_colorscheme(len(medcolors))
-	plt.scatter(medcolors, mass, color=cs)
-	plt.errorbar(medcolors, mass, yerr=[massloerrs, massuperrs], ecolor=cs, fmt='none')
+
+
+	lens_results = np.load('results/lensing_xcorrs/mass/%s.npy' % samplename, allow_pickle=True)
+	cs = return_colorscheme(len(lens_results[0]))
+	clustering_results = np.load('results/clustering/mass/%s.npy' % samplename, allow_pickle=True)
+
+	medcolors, lensmass, lensmasserrs = lens_results[0], lens_results[1], lens_results[2]
+	medcolors, cfmass, cfmassloerrs, cfmasshierrs = clustering_results[0], clustering_results[1], \
+	                                                clustering_results[2], clustering_results[3]
+
+	plt.scatter(medcolors, lensmass, edgecolors=cs, facecolors='none', label='CMB Lensing Result')
+	plt.errorbar(medcolors, lensmass, yerr=lensmasserrs, ecolor=cs, fmt='none')
+
+	plt.scatter(medcolors, cfmass, color=cs, label='Angular Clustering Result')
+	plt.errorbar(medcolors, cfmass, yerr=[cfmassloerrs, cfmasshierrs], fmt='none', ecolor=cs)
 
 	plt.xlabel(r'$\langle r - W2 \rangle$', fontsize=20)
 	plt.ylabel(r'$\mathrm{log}_{10}(M_h / h^{-1} M_{\odot})$', fontsize=20)
-
+	plt.legend(fontsize=20)
 
 	plt.savefig('plots/mass_v_color.pdf')
 	plt.close('all')

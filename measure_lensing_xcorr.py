@@ -8,7 +8,7 @@ import pymaster as nmt
 import os
 import glob
 from functools import partial
-import time
+
 
 import plotting
 importlib.reload(plotting)
@@ -16,6 +16,9 @@ importlib.reload(healpixhelper)
 
 
 def write_master_workspace(minl, maxl, nbins, apodize=None):
+	if len(glob.glob('masks/workspace.fits')) > 0:
+		print('Removing old Master matrix')
+		os.remove('masks/workspace.fits')
 	logbins = np.logspace(np.log10(minl), np.log10(maxl), nbins+1).astype(int)
 	lowedges, highedges = logbins[:-1], (logbins - 1)[1:]
 
@@ -28,7 +31,7 @@ def write_master_workspace(minl, maxl, nbins, apodize=None):
 
 	f0 = nmt.NmtField(mask, [np.zeros(len(mask))])
 	b = nmt.NmtBin.from_edges(lowedges, highedges)
-	np.array(b.get_effective_ells()).dump('lensing_xcorrs/scales.npy')
+	np.array(b.get_effective_ells()).dump('results/lensing_xcorrs/scales.npy')
 	w = nmt.NmtWorkspace()
 	w.compute_coupling_matrix(f0, f0, b)
 	w.write_to('masks/workspace.fits')
@@ -94,16 +97,16 @@ def xcorr_of_bin(bootnum, dcmap, master=True):
 def xcorr_by_bin(pool, nboots, samplename, minscale, maxscale, nbins=10, master=True):
 	boots = list(np.arange(nboots + 1))
 
-	oldfiles = glob.glob('lensing_xcorrs/%s*' % samplename)
+	oldfiles = glob.glob('results/lensing_xcorrs/%s*' % samplename)
 	for oldfile in oldfiles:
 		os.remove(oldfile)
 
 	scales = np.logspace(np.log10(minscale), np.log10(maxscale), nbins + 1)
-	#scales.dump('lensing_xcorrs/scales.npy')
+
 
 	nside = hp.npix2nside(len(hp.read_map('masks/union.fits')))
 
-	tab = Table.read('catalogs/derived/catwise_r90_binned.fits')
+	tab = Table.read('catalogs/derived/catwise_binned.fits')
 
 	for j in range(int(np.max(tab['bin']))):
 		binnedtab = tab[np.where(tab['bin'] == j + 1)]
@@ -112,7 +115,7 @@ def xcorr_by_bin(pool, nboots, samplename, minscale, maxscale, nbins=10, master=
 
 		part_func = partial(xcorr_of_bin, dcmap=dcmap, master=master)
 		cls = list(pool.map(part_func, boots))
-		print(cls)
+
 
 		if master:
 			binnedcls = cls
@@ -122,15 +125,15 @@ def xcorr_by_bin(pool, nboots, samplename, minscale, maxscale, nbins=10, master=
 			binnedcls = []
 			for k in range(1, nbins+1):
 				binnedcls.append(np.nanmean(cls[0][np.where(idxs == k)]))
-			print(binnedcls)
 
-		np.array(binnedcls).dump('lensing_xcorrs/%s_%s.npy' % (samplename, j + 1))
+
+		np.array(binnedcls).dump('results/lensing_xcorrs/%s_%s.npy' % (samplename, j + 1))
 
 	pool.close()
 
 def visualize_xcorr():
 	planckmap = hp.read_map('lensing_maps/planck/smoothed_masked.fits')
-	tab = Table.read('catalogs/derived/catwise_r90_binned.fits')
+	tab = Table.read('catalogs/derived/catwise_binned.fits')
 	dcmap = density_contrast_map(tab['RA'], tab['DEC'], nside=hp.npix2nside(len(planckmap)))
 	smoothdcmap = hp.smoothing(dcmap, fwhm=1*np.pi/180.)
 	smoothplanckmap = hp.smoothing(planckmap, fwhm=0.1 * np.pi/180.)
@@ -143,10 +146,15 @@ def visualize_xcorr():
 
 
 if __name__ == "__main__":
-	samplename = 'catwise_r90'
+	samplename = 'catwise'
+
+	oldfiles = glob.glob('results/lensing_xcorrs/%s_*' % samplename)
+	for file in oldfiles:
+		os.remove(file)
 
 	import schwimmbad
-	#write_master_workspace(50, 2000, 20)
+	lmin, lmax, n_l_bins = 50, 1000, 7
+	write_master_workspace(lmin, lmax, n_l_bins)
 
 	# use different executor based on command line arguments
 	# lets code run either serially (python measure_clustering.py)
@@ -170,8 +178,8 @@ if __name__ == "__main__":
 			sys.exit(0)
 
 	#visualize_xcorr()
-	xcorr_by_bin(pool, 5, samplename, 50, 2000, 20, master=True)
-	#plotting.lensing_xcorrs()
+	xcorr_by_bin(pool, 10, samplename, lmin, lmax, n_l_bins, master=True)
+	plotting.lensing_xcorrs(samplename)
 
 
 

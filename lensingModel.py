@@ -231,25 +231,30 @@ def dx_dz_lensing_kernel(lens_zs, source_zs=None):
 
 
 
-def dm_halo_kernel(lens_zs, dndz):
-	return apcosmo.H(lens_zs) / const.c * dndz
+def dm_halo_kernel(lens_zs, dndz, b_of_z):
+	return b_of_z * apcosmo.H(lens_zs) / const.c * dndz
 
 
-def x_power_spectrum(ls, zs, dndz):
+def x_power_spectrum(ls, zs, dndz, log_eff_mass=None):
 	kmax = 1000
-	k_grid = (np.logspace(-5, np.log10(kmax), 1000) * (u.littleh / u.Mpc)).to('1/Mpc', u.with_H0(apcosmo.H0))
+	k_grid = (np.logspace(-5, np.log10(kmax), 1000) * (u.littleh / u.Mpc))
 
 	lenskern = lensing_kernel(zs)
-	qsokern = dm_halo_kernel(zs, dndz)
+	if log_eff_mass is not None:
+		b_of_z = bias.haloBias(M=10**log_eff_mass, z=zs, mdef='200c', model='tinker10')
+	else:
+		b_of_z = np.ones(len(zs))
+	qsokern = dm_halo_kernel(zs, dndz, b_of_z)
 
 	integrand = const.c * lenskern * qsokern / ((apcosmo.comoving_distance(zs) ** 2) * apcosmo.H(zs))
-	ks = np.outer(1. / apcosmo.comoving_distance(zs), (ls + 1/2.))
-	pk_of_z = np.array(clusteringModel.power_spec_at_zs(zs))
+	ks = np.outer(1. / cosmo.comovingDistance(np.zeros(len(zs)), zs), (ls + 1/2.))
+	#pk_of_z = np.array(clusteringModel.power_spec_at_zs(zs))
 
 
 	ps_at_ks = []
 	for j in range(len(zs)):
-		ps_at_ks.append(np.interp(ks[j].value, k_grid.value, pk_of_z[j]))
+		pk_z = cosmo.matterPowerSpectrum(k_grid.value, z=zs[j])
+		ps_at_ks.append(np.interp(ks[j], k_grid.value, pk_z))
 	ps_at_ks = np.array(ps_at_ks) * (u.Mpc / u.littleh) ** 3
 
 
@@ -261,30 +266,32 @@ def x_power_spectrum(ls, zs, dndz):
 
 
 	
-def binned_x_power_spectrum(zs, dndz):
-	xpower = x_power_spectrum(np.arange(2048)+1, zs, dndz)
+def binned_x_power_spectrum(zs, dndz, log_eff_mass=None):
+	xpower = x_power_spectrum(np.arange(2048)+1, zs, dndz, log_eff_mass=log_eff_mass)
 
 
 	wsp = nmt.NmtWorkspace()
 	wsp.read_from('masks/workspace.fits')
 
 	binned_xpow = wsp.decouple_cell(wsp.couple_cell([xpower]))
-	return binned_xpow
+	return binned_xpow[0]
 
 def biased_binned_x_power_spectrum(foo, b, zs, dndz):
-	return b * binned_x_power_spectrum(zs, dndz)[0]
+	return b * binned_x_power_spectrum(zs, dndz)
 
-def mass_biased_x_power_spectrum(foo, m, zs, dndz):
-	b = bias_tools.mass_to_avg_bias(m, zs, dndz)
-	return biased_binned_x_power_spectrum(foo, b, zs, dndz)[0]
+def mass_biased_x_power_spectrum(foo, log_m, zs, dndz):
+	#b = bias_tools.mass_to_avg_bias(m, zs, dndz)
+	return binned_x_power_spectrum(zs, dndz, log_eff_mass=log_m)
 
-def fit_bias(data, errs, zs, dndz, mode='bias'):
-	if mode == 'bias':
-		partialfun = partial(biased_binned_x_power_spectrum, zs=zs, dndz=dndz)
-	else:
-		partialfun = partial(mass_biased_x_power_spectrum, zs=zs, dndz=dndz)
+def fit_bias(data, errs, zs, dndz):
+	partialfun = partial(biased_binned_x_power_spectrum, zs=zs, dndz=dndz)
 
 	popt, pcov = curve_fit(partialfun, np.ones(len(data)), data, sigma=errs, absolute_sigma=True)
+	return popt[0], np.sqrt(pcov)[0][0]
+
+def fit_mass(data, errs, zs, dndz):
+	partialfun = partial(mass_biased_x_power_spectrum, zs=zs, dndz=dndz)
+	popt, pcov = curve_fit(partialfun, np.ones(len(data)), data, sigma=errs, absolute_sigma=True, bounds=[11, 14])
 	return popt[0], np.sqrt(pcov)[0][0]
 
 

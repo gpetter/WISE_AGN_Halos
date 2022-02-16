@@ -1,16 +1,19 @@
 import emcee
 import numpy as np
 import clusteringModel
-import importlib
 import hod_model
-import corner
-import matplotlib.pyplot as plt
-importlib.reload(hod_model)
-importlib.reload(clusteringModel)
+import plotting
+
 
 
 # log prior function
 def ln_prior(theta):
+	if len(theta) == 1:
+		mmin = theta
+		if (mmin > 11) & (mmin < 14):
+			return 0.
+		else:
+			return -np.inf
 	if len(theta) == 2:
 		mmin, alpha = theta
 		# make flat priors on minimum mass and satellite power law
@@ -21,7 +24,7 @@ def ln_prior(theta):
 	elif len(theta) == 3:
 		mmin, alpha, m1 = theta
 		# make flat priors on minimum mass and satellite power law
-		if (mmin > 11.) & (mmin < 14.) & (alpha > 0) & (alpha < 2) & (m1 > mmin) & (m1 < 13.):
+		if (mmin > 11.) & (mmin < 14.) & (alpha > 0) & (alpha < 2) & (m1 > mmin) & (m1 < 14.5):
 			return 0.
 		else:
 
@@ -45,20 +48,16 @@ def ln_likelihood(residual, yerr):
 
 
 # log probability is prior plus likelihood
-def ln_prob(theta, anglebins, y, yerr, zs, dndz, modeltype, derived_keys=('f_sat', 'b_eff', 'm_eff')):
+def ln_prob(theta, anglebins, y, yerr, zs, dndz, modeltype):
 	prior = ln_prior(theta)
 
 	# keep track of derived parameters like satellite fraction, effective bias, effective mass
 	derived = (hod_model.derived_parameters(zs, dndz, theta, modeltype))
-	"""if 'f_sat' in derived_keys:
-		derived += (hod_model.satellite_fraction(zs, dndz, theta, modeltype),)
-	if 'b_eff' in derived_keys:
-		derived += (hod_model.effective_bias(zs, dndz, theta, modeltype),)
-	if 'm_eff' in derived_keys:
-		derived += (hod_model.effective_mass(zs, dndz, theta, modeltype),)"""
+
 
 	# get model prediciton for given parameter set
-	modelprediction = clusteringModel.angular_corr_func_in_bins(anglebins, zs, dndz, hodparams=theta,
+	modelprediction = clusteringModel.angular_corr_func_in_bins(anglebins, zs=zs, dn_dz_1=dndz,
+	                                                            hodparams=theta,
 	                                                            hodmodel=modeltype)
 
 	# residual is data - model
@@ -74,49 +73,55 @@ def ln_prob(theta, anglebins, y, yerr, zs, dndz, modeltype, derived_keys=('f_sat
 
 
 
-def sample_space(nwalkers, ndim, anglebins, y, yerr, zs, dndz, modeltype, derived_keys=('f_sat', 'b_eff', 'm_eff')):
+def sample_space(binnum, nbins, nwalkers, ndim, niter, anglebins, y, yerr,
+                 zs, dndz, modeltype, initial_params=None):
+
 	blobs_dtype = [("f_sat", float), ("b_eff", float), ("m_eff", float)]
-	sampler = emcee.EnsembleSampler(nwalkers, ndim, ln_prob, args=[anglebins, y, yerr, zs, dndz, modeltype,
-	                                                                derived_keys], blobs_dtype=blobs_dtype)
+	if ndim == 1:
+		blobs_dtype = blobs_dtype[1:]
 
 
+	sampler = emcee.EnsembleSampler(nwalkers, ndim, ln_prob, args=[anglebins, y, yerr, zs, dndz,
+	                                                               modeltype], blobs_dtype=blobs_dtype)
 
 
+	if initial_params is None:
+		initial_params = [12., 1., 12.5]
+		initial_params = initial_params[:ndim]
 
-	pos = np.array([12., 1., 12.5]) + 1e-1 * np.random.normal(size=(sampler.nwalkers, sampler.ndim))
-	sampler.run_mcmc(pos, 500, progress=True)
+	# start walkers near least squares fit position with random gaussian offsets
+	pos = np.array(initial_params) + 2e-1 * np.random.normal(size=(sampler.nwalkers, sampler.ndim))
+
+	sampler.run_mcmc(pos, niter, progress=True)
 
 
-	flatchain = sampler.get_chain(discard=50, flat=True)
-	blobs = sampler.get_blobs(discard=50, flat=True)
+	flatchain = sampler.get_chain(discard=10, flat=True)
+	blobs = sampler.get_blobs(discard=10, flat=True)
 
-	flatchain = np.hstack((
-		flatchain,
-		np.atleast_2d(blobs['f_sat']).T,
-		np.atleast_2d(blobs['b_eff']).T,
-		np.atleast_2d(blobs['m_eff']).T
-	))
+	if ndim > 1:
+		flatchain = np.hstack((
+			flatchain,
+			np.atleast_2d(blobs['f_sat']).T,
+			np.atleast_2d(blobs['b_eff']).T,
+			np.atleast_2d(blobs['m_eff']).T
+		))
+	else:
+		flatchain = np.hstack((
+			flatchain,
+			np.atleast_2d(blobs['b_eff']).T,
+			np.atleast_2d(blobs['m_eff']).T
+		))
 
-	plt.close('all')
+	centervals, lowerrs, higherrs = [], [], []
+	for i in range(ndim + len(blobs_dtype)):
+		post = np.percentile(flatchain[:, i], [16, 50, 84])
+		q = np.diff(post)
+		centervals.append(post[1])
+		lowerrs.append(q[0])
+		higherrs.append(q[1])
 
-	corner.corner(
-		flatchain,
-		labels=[r'log $M_{\rm min}$', r'$\alpha$', 'log $M1$', r'$f_{\rm sat}$', r'$b_{\mathrm{eff}}$',
-		        r'log $M_{\mathrm{eff}}$'],
-		quantiles=(0.16, 0.84),
-		show_titles=True,
-		# range=lim,
-		levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-4)),
-		plot_datapoints=False,
-		plot_density=False,
-		fill_contours=True,
-		color="blue",
-		hist_kwargs={"color": "black"},
-		smooth=0.5,
-		smooth1d=0.5,
-		truths=[12., 12.8, 1.05, None, None, None],
-		truth_color='darkgray'
-	)
 
-	plt.savefig("plots/hod_params.pdf")
-	plt.close('all')
+	plotting.hod_corner(flatchain, ndim, binnum, nbins)
+
+	return centervals, lowerrs, higherrs
+

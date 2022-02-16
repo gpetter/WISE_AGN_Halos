@@ -114,6 +114,17 @@ def change_coord(m, coord):
 	return m[..., new_pix]
 
 
+def masked_smoothing(U, fwhm_arcmin=15):
+	V = U.copy()
+	V[U != U] = 0
+	rad = fwhm_arcmin * np.pi / (180. * 60.)
+	VV = hp.smoothing(V, fwhm=rad)
+	W = 0 * U.copy() + 1
+	W[U != U] = 0
+	WW = hp.smoothing(W, fwhm=rad)
+	return VV / WW
+
+
 def masked_temp_map():
 	tempmap = hp.read_map('maps/COM_CMB_IQU-smica_2048_R3.00_full.fits', field=0, hdu=1, partial=False, nest=False)
 	tempmask = hp.read_map('maps/COM_CMB_IQU-smica_2048_R3.00_full.fits', field=3, hdu=1, partial=False, nest=False)

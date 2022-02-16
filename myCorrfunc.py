@@ -57,6 +57,29 @@ def convert_counts_to_cf(ND1, ND2, NR1, NR2,
 
 	return cf
 
+def convert_raw_counts_to_cf(ND1, ND2, NR1, NR2,
+							D1D2, D1R2, D2R1, R1R2,
+							estimator='LS'):
+	if 'LS' in estimator or 'Landy' in estimator:
+		fN1 = np.float(NR1) / np.float(ND1)
+		fN2 = np.float(NR2) / np.float(ND2)
+		cf = np.zeros(len(D1D2))
+		cf[:] = np.nan
+		cf = (fN1 * fN2 * D1D2 -
+		               fN1 * D1R2 -
+		               fN2 * D2R1 +
+		               R1R2) / R1R2
+	elif estimator == 'Peebles':
+		fN1 = np.float(NR1) / np.float(ND1)
+
+		cf = np.zeros(len(D1D2))
+		cf[:] = np.nan
+		cf = (fN1 * D1D2) / D1R2 - 1
+	else:
+		return "Choose Estimator"
+	return cf
+
+
 
 def convert_counts_to_wp(ND1, ND2, NR1, NR2,
 							   D1D2, D1R2, D2R1, R1R2,

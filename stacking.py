@@ -12,9 +12,6 @@ import glob
 import plotting
 import time
 from source import survival
-importlib.reload(survival)
-importlib.reload(plotting)
-importlib.reload(convergence_map)
 
 
 # convert ras and decs to galactic l, b coordinates
@@ -74,13 +71,15 @@ def stack_chunk(chunksize, nstack, lon, lat, inmap, weighting, prob_weights, ims
 		stepsize = chunksize
 	highidx, lowidx = ((k * chunksize) + stepsize), (k * chunksize)
 
-	totsum, weightsum = sum_projections(lon[lowidx:highidx], lat[lowidx:highidx], weighting[lowidx:highidx], prob_weights[lowidx:highidx], imsize, reso, inmap, stepsize)
+	totsum, weightsum = sum_projections(lon[lowidx:highidx], lat[lowidx:highidx], weighting[lowidx:highidx],
+	                                    prob_weights[lowidx:highidx], imsize, reso, inmap, stepsize)
 
 	return totsum, weightsum
 
 
 # stack by computing an average iteratively. this method uses little memory but cannot be parallelized
-def stack_projections(ras, decs, weights=None, prob_weights=None, imsize=240, outname=None, reso=1.5, inmap=None, nstack=None, mode='normal', chunksize=500):
+def stack_projections(ras, decs, weights=None, prob_weights=None, imsize=240, outname=None, reso=1.5, inmap=None,
+                      nstack=None, mode='normal', chunksize=500):
 	# if no weights provided, weights set to one
 	if weights is None:
 		weights = np.ones(len(ras))
@@ -105,13 +104,13 @@ def stack_projections(ras, decs, weights=None, prob_weights=None, imsize=240, ou
 	return finalstack
 
 
-def fast_stack(ras, decs, inmap, weights=None, prob_weights=None, nsides=2048, iterations=500, bootstrap=False):
+def fast_stack(lons, lats, inmap, weights=None, prob_weights=None, nsides=2048, iterations=500, bootstrap=False):
 	if weights is None:
-		weights = np.ones(len(ras))
+		weights = np.ones(len(lons))
 
 	outerkappa = []
-	lons, lats = equatorial_to_galactic(ras, decs)
-	#lons, lats = ras, decs
+
+
 	inmap = convergence_map.set_unseen_to_nan(inmap)
 	pix = hp.ang2pix(nsides, lons, lats, lonlat=True)
 	neighborpix = hp.get_all_neighbours(nsides, pix)
@@ -165,7 +164,8 @@ def stack_cutouts(ras, decs, weights, prob_weights, imsize, nstack, outname=None
 
 	# healpy projection objects used to create the projections
 	# contains methods to convert from angular position of quasar to i,j position in projection
-	projector_objects = [hp.projector.AzimuthalProj(rot=[projlons[i], projlats[i]], xsize=5000, reso=1.5, lamb=True) for i in range(len(projlons))]
+	projector_objects = [hp.projector.AzimuthalProj(rot=[projlons[i], projlats[i]], xsize=5000, reso=1.5, lamb=True)
+	                     for i in range(len(projlons))]
 	# convert ras and decs to galactic ls, bs
 	lon, lat = equatorial_to_galactic(ras, decs)
 
@@ -182,7 +182,8 @@ def stack_cutouts(ras, decs, weights, prob_weights, imsize, nstack, outname=None
 		# make cutout
 		cut_at_position = cutout_to_use[int(i-imsize/2):int(i+imsize/2), int(j-imsize/2):int(j+imsize/2)]
 		# stack
-		running_sum, weightsum = stack_iteration(running_sum, weightsum, cut_at_position, weights[j], prob_weights[j], imsize)
+		running_sum, weightsum = stack_iteration(running_sum, weightsum, cut_at_position, weights[j], prob_weights[j],
+		                                         imsize)
 	finalstack = running_sum/weightsum
 	if outname is not None:
 		finalstack.dump('%s.npy' % outname)
@@ -219,11 +220,17 @@ def quick_stack_suite(sample_name, kappa_name, bootstrap=False, nsides=2048):
 	kappa_map = hp.read_map('lensing_maps/%s/smoothed_masked.fits' % kappa_name)
 	tab = Table.read('catalogs/derived/%s_binned.fits' % sample_name)
 
+
 	medcolors, peakkappas, kappa_errs = [], [], []
 	for j in range(int(np.max(tab['bin']))):
 		binnedtab = tab[np.where(tab['bin'] == j+1)]
-		peakkap, kapstd = fast_stack(binnedtab['RA'], binnedtab['DEC'], kappa_map, nsides=nsides)
+		if kappa_name == 'planck':
+			lons, lats = equatorial_to_galactic(binnedtab['RA'], binnedtab['DEC'])
+		else:
+			lons, lats = binnedtab['RA'], binnedtab['DEC']
+		peakkap, kapstd = fast_stack(lons, lats, kappa_map, nsides=nsides)
 		peakkappas.append(peakkap), kappa_errs.append(kapstd)
+
 		#medcolors.append(survival.km_median(binnedtab['color'], np.logical_not(binnedtab['detect'])))
 		medcolors.append(np.median(binnedtab['color']))
 	plotting.plot_peakkappa_vs_bin(medcolors, peakkappas, kappa_errs)

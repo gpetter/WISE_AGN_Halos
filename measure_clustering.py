@@ -54,7 +54,7 @@ def clustering_of_patch(patchval, patchmap, nside, ras, decs, randras, randdecs,
 
 
 # loop through each bin, map cores to bootstrap iterations or individual patches on sky
-def clustering_by_bin(pool, nboots, samplename, minscale, maxscale, nbins=10, resample_patches=True):
+def clustering_by_bin(pool, nboots, samplename, minscale, maxscale, nbins=10, oversample=3, resample_patches=True):
 	boots = list(np.arange(nboots + 1))
 
 	# write angular scales to file
@@ -99,9 +99,9 @@ def clustering_by_bin(pool, nboots, samplename, minscale, maxscale, nbins=10, re
 
 			# for each bootstrap, randomly select patches (oversampled by factor of 3) and sum counts in those patches
 			for k in range(nboots):
-				boot_patches = np.random.choice(np.arange(npatches), 3 * npatches)
+				boot_patches = np.random.choice(np.arange(npatches), oversample * npatches)
 				bootndata, bootnrands = ndata[boot_patches], nrands[boot_patches]
-				totdata, totrands = np.sum(bootndata) / 3., np.sum(bootnrands) / 3.
+				totdata, totrands = np.sum(bootndata) / np.float(oversample), np.sum(bootnrands) / np.float(oversample)
 				boot_ddcounts, boot_drcounts, bootrrcounts = dd_counts[boot_patches], dr_counts[boot_patches], \
 				                                             rr_counts[boot_patches]
 				totddcounts, totdrcounts, totrrcounts = np.sum(boot_ddcounts, axis=0), np.sum(boot_drcounts, axis=0),\
@@ -156,7 +156,7 @@ if __name__ == "__main__":
 			pool.wait()
 			sys.exit(0)
 
-	clustering_by_bin(pool, 500, samplename, -2.5, -0.25, 15)
+	clustering_by_bin(pool, 500, samplename, -2.5, -0.25, nbins=15, oversample=1)
 	plotting.plot_ang_autocorrs(samplename)
 	plotting.cf_err_comparison(samplename)
 

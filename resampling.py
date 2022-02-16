@@ -66,9 +66,8 @@ def bin_on_sky(ras, decs, njackknives, nside=None):
 	else:
 		coords = np.concatenate([[hp_ra], [hp_dec]])
 		coords = coords.T
-	n_clusters = 100
 
-	kmeans = cluster.KMeans(n_clusters=n_clusters, n_init=10)
+	kmeans = cluster.KMeans(n_clusters=njackknives, n_init=10)
 	t0 = time.time()
 	kmeans.fit(coords)
 	elapsed_time = time.time() - t0
@@ -86,6 +85,7 @@ def bin_on_sky(ras, decs, njackknives, nside=None):
 	# plt.axis([360, 0, -21, 36])
 	plt.savefig('plots/jackknives.pdf')
 	plt.close('all')
+	return blankmap
 
 
 

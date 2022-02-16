@@ -5,16 +5,10 @@ from astropy.stats import sigma_clipped_stats
 from astropy.convolution import Gaussian2DKernel
 from scipy.signal import convolve as scipy_convolve
 #from pixell import enmap, reproject, utils
-import astropy.units as u
 from astropy.table import Table
-from astropy.io import fits
-from astropy import wcs
-import importlib
-import healpixhelper
 import masking
 import glob
-importlib.reload(masking)
-importlib.reload(healpixhelper)
+import astropy.units as u
 
 # number of sides to each healpix pixel
 #nsides = 2048
@@ -40,7 +34,7 @@ def set_unseen_to_mask(map):
     return x
 
 
-# zeroes out alm amplitudes for less than a maximum l cutoff
+# zeroes out alm amplitudes for less than a maximum l cutoff and above a maximum cutoff
 def zero_modes(almarr, lmin_cut, lmax_cut):
     lmax = hp.Alm.getlmax(len(almarr))
     l, m = hp.Alm.getlm(lmax=lmax)
@@ -49,6 +43,7 @@ def zero_modes(almarr, lmin_cut, lmax_cut):
     return almarr
 
 
+# smooth an alm with Wiener filter which inversely weights modes by their noise
 def wiener_filter(almarr):
     lmax = hp.Alm.getlmax(len(almarr))
     l, m = hp.Alm.getlm(lmax=lmax)
@@ -64,6 +59,7 @@ def wiener_filter(almarr):
     return almarr
 
 
+# apply smoothing to a map with masking
 def masked_smoothing(inmap, rad=5.0):
     inmap[np.where(inmap == hp.UNSEEN)] = np.nan
     copymap = inmap.copy()
@@ -75,6 +71,7 @@ def masked_smoothing(inmap, rad=5.0):
     final = smooth / smoothmask
     final[np.where(np.isnan(final))] = hp.UNSEEN
     return final
+
 
 # read in a klm fits lensing convergence map, zero l modes desired, write out map
 def klm_2_map(klmname, mapname, nsides):
@@ -114,6 +111,7 @@ def klm_2_product(klmname, width, maskname, nsides, lmin, coord=None, subtract_m
     # read in planck alm convergence data
     planck_lensing_alm = hp.read_alm(klmname)
 
+    # trying to generate map from l modes >~ 2*nside causes ringing
     lmax_cut = 2 * nsides
 
     # if you're going to transform coordinates, usually from equatorial to galactic
@@ -175,19 +173,22 @@ def klm_2_product(klmname, width, maskname, nsides, lmin, coord=None, subtract_m
 
 def write_planck_maps(real, noise, width, nsides, lmin):
     if real:
+        klm_2_product(klmname='lensing_maps/planck/dat_klm.fits', width=0*u.arcmin,
+                      maskname='lensing_maps/planck/mask.fits',
+                      nsides=nsides, lmin=lmin, writename='lensing_maps/planck/unsmoothed_masked')
         klm_2_product(klmname='lensing_maps/planck/dat_klm.fits', width=width, maskname='lensing_maps/planck/mask.fits',
                       nsides=nsides, lmin=lmin, writename='lensing_maps/planck/smoothed_masked')
     if noise:
         realsnames = glob.glob('lensing_maps/planck/noise/klms/sim*')
         for j in range(len(realsnames)):
-            klm_2_product(realsnames[j], width=width, maskname='lensing_maps/planck/mask.fits', nsides=nsides,
+            klm_2_product(realsnames[j], width=0*u.arcmin, maskname='lensing_maps/planck/mask.fits', nsides=nsides,
                           lmin=lmin, writename='lensing_maps/planck/noise/maps/%s' % j)
 
 
 
 
-def weak_lensing_map(width):
-    k_map = Table.read('lensing_maps/desy1/y1a1_spt_im3shape_0.9_1.3_kE.fits')['kE']
+def weak_lensing_map(tomo_bin='tomo4', reconstruction='wiener', width=0*u.arcmin):
+    """k_map = Table.read('lensing_maps/desy1/y1a1_spt_im3shape_0.9_1.3_kE.fits')['kE']
     mask = Table.read('lensing_maps/desy1/y1a1_spt_im3shape_0.9_1.3_mask.fits')['mask']
 
     smoothed = hp.smoothing(k_map, width.to('radian').value)
@@ -195,7 +196,11 @@ def weak_lensing_map(width):
     smoothed_masked_map.mask = np.logical_not(mask)
 
     hp.write_map('lensing_maps/desy1/smoothed_masked.fits', smoothed_masked_map.filled(), overwrite=True,
-                 dtype=np.single)
+                 dtype=np.single)"""
+    lensmap = hp.read_map('lensing_maps/desy3/%s_%s.fits' % (reconstruction, tomo_bin))
+    desmask = hp.read_map('lensing_maps/desy3/glimpse_mask.fits')
+    lensmap[np.where(np.logical_not(desmask))] = hp.UNSEEN
+    hp.write_map('lensing_maps/desy3/smoothed_masked.fits', lensmap, overwrite=True)
 
 
 

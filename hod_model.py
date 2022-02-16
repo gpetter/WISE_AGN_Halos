@@ -1,60 +1,51 @@
 import numpy as np
-import mcfit
-import matplotlib.pyplot as plt
+
 from colossus.halo import profile_nfw
 from colossus.lss import bias
 from colossus.cosmology import cosmology
-import scipy as sp
-import scipy.interpolate
 from colossus.lss import mass_function
 import astropy.units as u
 from colossus.halo import concentration
 
 from scipy import special
-
-from halotools.empirical_models import PrebuiltHodModelFactory
 from scipy.special import sici
-import halomod
 
 
-cosmo = cosmology.setCosmology('planck15')
+
+cosmo = cosmology.setCosmology('planck18')
 apcosmo = cosmo.toAstropy()
 
 
 
 param_keys = {'logMmin': 0, 'alpha': 1, 'logM1': 2}
 
-mass_grid = np.logspace(9., 15, 50)
+mass_grid = np.load('power_spectra/m_space.npy', allow_pickle=True)
+k_grid = np.load('power_spectra/k_space.npy', allow_pickle=True)
 
-r_grid = np.logspace(-2, 6, 10000) * (u.kpc / u.littleh)
 ukms = np.load('power_spectra/ukm.npy', allow_pickle=True)
 
-#k_grid = np.logspace(-5, 3, 1000) * (u.littleh / u.Mpc)
-
-def log_interp1d(xx, yy, kind='linear'):
-	logx = np.log10(xx)
-	logy = np.log10(yy)
-	lin_interp = sp.interpolate.interp1d(logx, logy, kind=kind, fill_value=0., bounds_error=False)
-	log_interp = lambda zz: np.power(10.0, lin_interp(np.log10(zz)))
-	return log_interp
 
 # mass-concentration relation
 def concentration_from_mass(masses, z):
 	return concentration.concentration(masses, '200c', z, model='ludlow16')
 
+# use halomod u(k,m) by writing tables and interpolating onto them
 def write_ukm():
-	lnkmin = np.log(10 ** (-5.))
-	lnkmax = np.log(10 ** (3.))
+	import halomod
+	lnkmin = np.log(np.min(k_grid))
+	lnkmax = np.log(np.max(k_grid))
 	dlnk = (lnkmax - lnkmin) / 1000.
 	zlist = np.linspace(0, 4, 400)
 	uks = []
 	for z in zlist:
+		mmin, mmax = np.min(np.log10(mass_grid)), np.max(np.log10(mass_grid))
+
 		hm_smt3 = halomod.TracerHaloModel(
 			z=z, cosmo_model='Planck15',
-			Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
+			Mmin=mmin, Mmax=mmax, transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
 			hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.}, takahashi=False,
 			exclusion_model=None, halo_concentration_model='Ludlow16Empirical', mdef_model='SOCritical',
-			hm_dlog10k=0.008, dlog10m=0.12, lnk_min=lnkmin, lnk_max=lnkmax, dlnk=dlnk,
+			hm_dlog10k=0.008, dlog10m=(mmax - mmin)/len(mass_grid), lnk_min=lnkmin, lnk_max=lnkmax, dlnk=dlnk,
 			force_1halo_turnover=False, mdef_params={'overdensity': 200}
 		)
 		uks.append(hm_smt3.halo_profile_ukm)
@@ -64,7 +55,8 @@ def write_ukm():
 
 
 # take Fourier transform of NFW density profile
-def transformed_nfw_profile(k_grid, masses, z, analytic=False):
+# currently can't figure out how to get same result as halomod, so interpolating onto their solution
+def transformed_nfw_profile(masses, z, analytic=False):
 	#c = concentration_from_mass(m, z)
 	#p_nfw = profile_nfw.NFWProfile(M=m, c=c, z=z, mdef='200c')
 
@@ -94,6 +86,7 @@ def transformed_nfw_profile(k_grid, masses, z, analytic=False):
 		        np.cos(k_r_s) * (ci_1c_krs - ci_krs)
 		uk = prefactor * term1
 	else:
+
 		"""lnkmin = np.log(10**(-5.))
 		lnkmax = np.log(10**(3.))
 		dlnk = (lnkmax - lnkmin) / 1000.
@@ -111,6 +104,7 @@ def transformed_nfw_profile(k_grid, masses, z, analytic=False):
 		uk = ukms[np.argmin(np.abs(z - np.linspace(0, 4, 400)))]
 
 	# !!!! this method doesn't work right now, use analytic form
+	r_grid = np.logspace(-2, 6, 10000) * (u.kpc / u.littleh)
 	"""else:
 		rho_of_r = p_nfw.density(r=r_grid.value) * (u.solMass * u.littleh ** 2) * (1 / (u.kpc ** 3)).to(
 			1 / (u.Mpc ** 3))
@@ -151,18 +145,29 @@ def three_param_hod(masses, logm_min, alpha, logm1):
 	n_sat = (((masses - (10 ** logm_min))/ (10 ** logm1)) ** alpha)
 	n_sat[np.where(np.log10(masses) <= logm_min)] = 0.
 
-
 	return n_cen, n_sat
 
+# a two parameter version of Zheng model where M_1 is fixed to be a constant multiple of M_min
 def two_param_hod(masses, logm_min, alpha):
 	# fix M1 to be 20x M_min (Georgakakis 2018)
-	n_cen, n_sat = three_param_hod(masses, logm_min, alpha, logm_min + np.log10(15))
+	n_cen, n_sat = three_param_hod(masses, logm_min, alpha, logm_min + np.log10(10))
 	return n_cen, n_sat
+
+def one_param_hod(masses, logm_min):
+	#ncen = np.ones(len(masses))
+	#ncen[np.where(np.log10(masses) < logm_min)] = 0.
+	ncen = np.zeros(len(masses))
+	closeidx = np.abs(np.log10(masses) - logm_min).argmin()
+	ncen[closeidx] = 1
+	ncen[closeidx + 1] = 1
+	nsat = np.zeros(len(masses))
+	return ncen, nsat
 
 
 # number of central AGN
 def n_central(masses, params, modelname='zheng07'):
 	if modelname == 'zheng07':
+		from halotools.empirical_models import PrebuiltHodModelFactory
 		model = PrebuiltHodModelFactory('zheng07')
 		mean_ncen = model.mean_occupation_centrals(prim_haloprop=masses)
 	elif modelname == '2param':
@@ -170,6 +175,8 @@ def n_central(masses, params, modelname='zheng07'):
 	elif modelname == '3param':
 		mean_ncen = three_param_hod(masses, params[param_keys['logMmin']], params[param_keys['alpha']],
 		                            params[param_keys['logM1']])[0]
+	elif modelname == '1param':
+		mean_ncen = one_param_hod(masses, params[param_keys['logMmin']])[0]
 	else:
 		return 'error'
 
@@ -180,6 +187,7 @@ def n_central(masses, params, modelname='zheng07'):
 # number of satellites
 def n_satellites(masses, params, modelname='zheng07'):
 	if modelname == 'zheng07':
+		from halotools.empirical_models import PrebuiltHodModelFactory
 		model = PrebuiltHodModelFactory('zheng07')
 		mean_nsat = model.mean_occupation_satellites(prim_haloprop=masses)
 	elif modelname == '2param':
@@ -187,6 +195,8 @@ def n_satellites(masses, params, modelname='zheng07'):
 	elif modelname == '3param':
 		mean_nsat = three_param_hod(masses, params[param_keys['logMmin']], params[param_keys['alpha']],
 		                            params[param_keys['logM1']])[1]
+	elif modelname == '1param':
+		mean_nsat = one_param_hod(masses, params[param_keys['logMmin']])[1]
 	else:
 		return 'error'
 
@@ -194,8 +204,8 @@ def n_satellites(masses, params, modelname='zheng07'):
 
 
 # sum of one and two halo terms
-def hod_total(masses, params, modeltype='zheng07'):
-	return n_central(masses, params, modeltype) + n_satellites(masses, params, modeltype)
+def hod_total(params, modeltype='zheng07'):
+	return n_central(mass_grid, params, modeltype) + n_satellites(mass_grid, params, modeltype)
 
 
 # integral of HOD over halo mass function gives average number density of AGN
@@ -206,7 +216,7 @@ def avg_number_density(hmf, hod):
 	return np.trapz(hmf * hod, x=np.log(mass_grid))
 
 
-def one_halo_power_spectrum(k_grid, hmf, u_of_k_for_m, n_cen, n_sat, z, params, modeltype='zheng07'):
+def one_halo_power_spectrum(hmf, u_of_k_for_m, n_cen, n_sat, z, params, modeltype='zheng07'):
 	force_turnover = False
 
 
@@ -214,18 +224,23 @@ def one_halo_power_spectrum(k_grid, hmf, u_of_k_for_m, n_cen, n_sat, z, params, 
 	avg_dens = avg_number_density(hmf, (n_cen+n_sat))
 	integral = (1 / avg_dens ** 2) * np.trapz(integrand, dx=np.log(mass_grid)[1] - np.log(mass_grid)[0])
 	if force_turnover:
-		integral[np.where(k_grid.value < 1e-2)] = 0.
+		integral[np.where(k_grid < 1e-2)] = 0.
 	return integral
 
 
-def halo_halo_power_spectrum(k_grid, m1, m2, z):
+def halo_halo_power_spectrum(m1, m2, z):
 	b1, b2 = bias.haloBias(m1, z, mdef='200c', model='tinker10'), bias.haloBias(m2, z, mdef='200c', model='tinker10')
 
-	pk = cosmo.matterPowerSpectrum(k_grid.value, z) * (u.Mpc / u.littleh) ** 3
+	pk = cosmo.matterPowerSpectrum(k_grid, z) * (u.Mpc / u.littleh) ** 3
 	return np.outer(b1 * b2, pk)
 
 
-def two_halo_power_spectrum(k_grid, hmf, u_of_k_for_m, n_cen, n_sat, z, params, modeltype='zheng07'):
+def b_eff_of_z(hmf, hod, avg_dens, z):
+	beff_z = 1. / avg_dens * np.trapz(bias.haloBias(mass_grid, model='tinker10', z=z, mdef='200c') *
+	                                   hod * hmf, x=np.log(mass_grid))
+	return beff_z
+
+def two_halo_power_spectrum(hmf, u_of_k_for_m, n_cen, n_sat, z, params, modeltype='zheng07'):
 	avg_dens = avg_number_density(hmf, (n_cen + n_sat))
 
 	# do full double integral. !!!! doesn't work, use single integral
@@ -235,7 +250,7 @@ def two_halo_power_spectrum(k_grid, hmf, u_of_k_for_m, n_cen, n_sat, z, params, 
 			first_term = n_cen + n_sat * u_of_k_for_m[:, np.where(mass_grid == m_outer)[0]]
 
 			second_term = n_cen + n_sat * u_of_k_for_m
-			p_hhs = halo_halo_power_spectrum(k_grid, mass_grid, m_outer, z)
+			p_hhs = halo_halo_power_spectrum(mass_grid, m_outer, z)
 			p_hhs = np.transpose(p_hhs)
 
 			return np.trapz(hmf * first_term * second_term * np.array(p_hhs), x=np.log(mass_grid))
@@ -246,12 +261,16 @@ def two_halo_power_spectrum(k_grid, hmf, u_of_k_for_m, n_cen, n_sat, z, params, 
 
 		return 1 / avg_dens ** 2 * np.trapz(hmf * np.transpose(inners), x=np.log(mass_grid))
 
+
 	else:
 		bias_grid = bias.haloBias(mass_grid, z, mdef='200c', model='tinker10')
 		integrand = hmf * bias_grid * (n_cen + n_sat) * u_of_k_for_m
 		integral = np.trapz(integrand, x=np.log(mass_grid))
-		return (1 / avg_dens ** 2) * (integral ** 2) * cosmo.matterPowerSpectrum(k_grid.value, z) * \
+		return (1 / avg_dens ** 2) * (integral ** 2) * cosmo.matterPowerSpectrum(k_grid, z) * \
 		       (u.Mpc / u.littleh) ** 3
+		#yyi= (b_eff_of_z(hmf=hmf, hod=(n_cen + n_sat), avg_dens=avg_dens, z=z) ** 2) * cosmo.matterPowerSpectrum(
+		#				k_grid, z) * (u.Mpc / u.littleh) ** 3
+
 
 
 
@@ -263,18 +282,19 @@ def effective_bias(hmf, hod, avg_dens, zs, dndz):
 	for z in zs:
 		bofm_z.append(bias.haloBias(mass_grid, model='tinker10', z=z, mdef='200c'))
 
+
 	beff_zs = 1. / avg_dens * np.trapz(bofm_z * hod * hmf, x=np.log(mass_grid))
 
 	return np.average(beff_zs, weights=dndz)
 
 
-def effective_mass(hmf, hod, avg_dens, dndz):
+def log_effective_mass(hmf, hod, avg_dens, dndz):
 
 
 	meff_zs = 1. / avg_dens * np.trapz(mass_grid * hod * hmf, x=np.log(mass_grid))
 
 
-	return np.average(meff_zs, weights=dndz)
+	return np.average(np.log10(meff_zs), weights=dndz)
 
 
 def satellite_fraction(hmf, n_sat, avg_dens, dndz):
@@ -283,10 +303,10 @@ def satellite_fraction(hmf, n_sat, avg_dens, dndz):
 	return np.average(fsat_zs, weights=dndz)
 
 
-def u_of_k_for_m_for_zs(k_grid, masses, zs):
+def u_of_k_for_m_for_zs(masses, zs):
 	uk_m_z = []
 	for z in zs:
-		uk_m_z.append(transformed_nfw_profile(k_grid, masses, z))
+		uk_m_z.append(transformed_nfw_profile(masses, z))
 	return np.array(uk_m_z)
 
 def hmf_for_zs(masses, zs):
@@ -296,16 +316,16 @@ def hmf_for_zs(masses, zs):
 	return np.array(hmfs)
 
 
-def power_spectra_for_zs(k_grid, zs, params, modeltype='zheng07'):
+def power_spectra_for_zs(zs, params, modeltype='zheng07'):
 	hmf_of_z = hmf_for_zs(mass_grid, zs)
-	uk_m_z = u_of_k_for_m_for_zs(k_grid, mass_grid, zs)
+	uk_m_z = u_of_k_for_m_for_zs(mass_grid, zs)
 	n_cen, n_sat = n_central(mass_grid, params, modeltype), n_satellites(mass_grid, params, modeltype)
 
 	onehalos, twohalos = [], []
 
 	for j in range(len(zs)):
-		onehalos.append(one_halo_power_spectrum(k_grid, hmf_of_z[j], uk_m_z[j], n_cen, n_sat, zs[j], params, modeltype))
-		twohalos.append(two_halo_power_spectrum(k_grid, hmf_of_z[j], uk_m_z[j], n_cen, n_sat, zs[j], params, modeltype))
+		onehalos.append(one_halo_power_spectrum(hmf_of_z[j], uk_m_z[j], n_cen, n_sat, zs[j], params, modeltype))
+		twohalos.append(two_halo_power_spectrum(hmf_of_z[j], uk_m_z[j], n_cen, n_sat, zs[j], params, modeltype))
 
 	return onehalos, twohalos
 
@@ -315,25 +335,29 @@ def derived_parameters(zs, dndz, params, modeltype='zheng07'):
 	avg_dens_of_z = avg_number_density(hmf_of_z, (n_cen + n_sat))
 
 	beff = effective_bias(hmf_of_z, (n_cen + n_sat), avg_dens_of_z, zs, dndz)
-	meff = effective_mass(hmf_of_z, (n_cen + n_sat), avg_dens_of_z, dndz)
+	meff = log_effective_mass(hmf_of_z, (n_cen + n_sat), avg_dens_of_z, dndz)
 	f_sat = satellite_fraction(hmf_of_z, n_sat, avg_dens_of_z, dndz)
-
-	return f_sat, beff, meff
-
-
-
-
+	if modeltype == '1param':
+		return beff, meff
+	else:
+		return f_sat, beff, meff
 
 
-def redshift_averaged_power_spectra(k_grid, zs, dndz, params, modeltype='zheng07'):
-	onehalos, twohalos = power_spectra_for_zs(k_grid, zs, params, modeltype)
+
+
+
+
+def redshift_averaged_power_spectra(zs, dndz, params, modeltype='zheng07'):
+	onehalos, twohalos = power_spectra_for_zs(zs, params, modeltype)
 	avg_onehalo = np.average(onehalos, weights=dndz, axis=0)
 	avg_twohalo = np.average(twohalos, weights=dndz, axis=0)
 
 	return avg_onehalo, avg_twohalo
 
 def compare_angcfs():
+	import halomod
 
+	import matplotlib.pyplot as plt
 	import clusteringModel
 	import importlib
 	importlib.reload(clusteringModel)
@@ -371,6 +395,8 @@ def compare_angcfs():
 	plt.close('all')
 
 def compare_ukm():
+	import halomod
+	import matplotlib.pyplot as plt
 	plt.figure(figsize=(8, 7))
 	lnkmin = np.log(10 ** (-5.))
 	lnkmax = np.log(10 ** (3.))
@@ -389,8 +415,8 @@ def compare_ukm():
 	#nf = halomod.profiles.NFW(cm_relation=lud)
 	#print(nf.scale_radius(m=1e12, at_z=True))
 
-	ukm = transformed_nfw_profile(k_grid, mass_grid, 3)
-	#ukm2 = transformed_nfw_profile(k_grid, mass_grid, 2)
+	ukm = transformed_nfw_profile(mass_grid, 3)
+	#ukm2 = transformed_nfw_profile(mass_grid, 2)
 
 	plt.plot(k_grid, ukm[:, 0])
 	#plt.plot(k_grid, ukm2[:, 0])
@@ -409,6 +435,8 @@ def compare_ukm():
 
 
 def compare_nfwruns():
+	import halomod
+	import matplotlib.pyplot as plt
 	plt.figure(figsize=(8, 7))
 	hm_smt3 = halomod.TracerHaloModel(
 		z=0., cosmo_model='Planck15',
@@ -436,6 +464,8 @@ def compare_nfwruns():
 	plt.close('all')
 
 def compare_powspec():
+	import halomod
+	import matplotlib.pyplot as plt
 	plt.figure(figsize=(8, 7))
 	hm_smt3 = halomod.TracerHaloModel(
 		z=0., cosmo_model='Planck15',
@@ -460,6 +490,7 @@ def compare_powspec():
 
 
 def plot_hod(params, modeltype):
+	import matplotlib.pyplot as plt
 	n_cen = n_central(mass_grid, params, modeltype)
 	n_sat = n_satellites(mass_grid, params, modeltype)
 	masses = np.log10(mass_grid)
@@ -478,12 +509,3 @@ def plot_hod(params, modeltype):
 	plt.close('all')
 
 
-
-
-
-
-
-
-#plot_hod([12., 1, 12.5], modeltype='3param')
-#k_grid_tmp = np.logspace(-5, 3, 1000) * (u.littleh / u.Mpc)
-#plot_both_pow_specs(k_grid_tmp, [12., 1., 12.5], modeltype='3param')

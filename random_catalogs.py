@@ -1,6 +1,5 @@
 
-import pymangle
-
+from scipy import stats
 import healpy as hp
 import numpy as np
 from astropy.table import Table, vstack
@@ -162,32 +161,6 @@ def fullsky_eboss_randoms(a):
 	bothtab = vstack((ngctab, sgctab))
 	return bothtab
 
-
-def correct_for_depth():
-	tab = Table.read('catalogs/derived/catwise_r90_binned.fits')
-	nbins = int(np.max(tab['bin']))
-	depth_map = hp.read_map('masks/ls_depth.fits')
-	nside = hp.npix2nside(len(depth_map))
-
-	for i in range(1, nbins+1):
-		binnedtab = tab[np.where(tab['bin'] == i)]
-
-		lons, lats = healpixhelper.equatorial_to_galactic(binnedtab['RA'], binnedtab['DEC'])
-
-		pix = hp.ang2pix(nside, lons, lats, lonlat=True)
-		depthsforpix = depth_map[pix]
-		avgdens, avgdepth = [], []
-
-		depthbins = [[150, 250], [250, 1000], [1000, 10000]]
-
-		for j in range(3):
-			indepthbin = np.where((depthsforpix > depthbins[j][0]) & (depthsforpix < depthbins[j][1]))
-			avgdepth.append(np.mean(depthsforpix[indepthbin]))
-			depthbintab = binnedtab[indepthbin]
-			densmap = healpixhelper.healpix_density_map(depthbintab['RA'], depthbintab['DEC'], 64)
-			nonzerodens = densmap[np.where(densmap != 0)]
-			avgdens.append(np.mean(nonzerodens))
-		plotting.depth_v_density(avgdepth, avgdens, i)
 
 
 

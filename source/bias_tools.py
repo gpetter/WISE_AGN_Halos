@@ -15,10 +15,15 @@ def bias_to_mass(inputbias, z):
 
 
 # take a characteristic halo mass and calculate the resulting average bias over a given redshift distribution
-def mass_to_avg_bias(m, zs, dndz):
+def mass_to_avg_bias(m, zs, dndz, merr=None):
 	bh = bias.haloBias(M=m, z=zs, mdef='200c', model='tinker10')
 
 	avg_bh = np.average(bh, weights=dndz)
+	if merr is not None:
+		bh_plus = bias.haloBias(M=(m+merr[0]), z=zs, mdef='200c', model='tinker10')
+		bh_minus = bias.haloBias(M=(m-merr[1]), z=zs, mdef='200c', model='tinker10')
+		avg_bh_err = np.mean([bh_plus - avg_bh, avg_bh - bh_minus])
+		return avg_bh, avg_bh_err
 
 	return avg_bh
 

@@ -30,3 +30,13 @@ def two_scales(ax1, transforms, newlabel, analytic, axis='y', labelsize=20):
 		secax.tick_params('both', labelsize=labelsize, which='major', length=8)
 		secax.tick_params('both', which='minor', length=3)
 		# secax.set_ylim(forward(ylim[0]), forward(ylim[1]))
+
+
+def freedman_diaconis(vals):
+	from scipy.stats import iqr
+	from math import ceil
+	statiqr = iqr(vals)
+	h = 2 * statiqr * len(vals) ** (-1/3.)
+	nbins = (np.max(vals) - np.min(vals)) / h
+
+	return ceil(nbins)

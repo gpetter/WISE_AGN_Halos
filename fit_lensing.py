@@ -23,28 +23,38 @@ def fit_lensing_of_bin(binnum, samplename, mode='bias'):
 	binnedtab = tab[np.where(tab['bin'] == binnum)]
 	frac, zs = redshift_dists.get_redshifts(binnedtab, sample='cosmos')
 
-	xpower = np.load('lensing_xcorrs/%s_%s.npy' % (samplename, binnum), allow_pickle=True)
+	xpower = np.load('results/lensing_xcorrs/%s_%s.npy' % (samplename, binnum), allow_pickle=True)
 
 	power = xpower[0]
 	power_err = resampling.covariance_matrix(xpower[1:], power)
 	power_err = np.std(xpower[1:], axis=0)
 
-	print(np.mean(xpower[:1], axis=0))
 
 	midzs, dndz = redshift_dists.redshift_dist(zs, nbins=10)
-	scales = np.load('lensing_xcorrs/scales.npy', allow_pickle=True)
+	scales = np.load('results/lensing_xcorrs/scales.npy', allow_pickle=True)
 
 
-	b, b_err = lensingModel.fit_bias(power, power_err, midzs, dndz, mode=mode)
 
-	masses, massuperr, massloerr = bias_tools.avg_bias_to_mass(b, midzs, dndz, b_err)
-	np.array([b, b_err]).dump('%s/%s_%s.npy' % (mode, samplename, binnum))
+
+
+
 	if mode == 'bias':
+		b, b_err = lensingModel.fit_bias(power, power_err, midzs, dndz, mode=mode)
+		mass, massuperr, massloerr = bias_tools.avg_bias_to_mass(b, midzs, dndz, b_err)
+		avgmasserr = np.mean([massloerr, massuperr])
+		np.array([b, b_err]).dump('results/lensing_xcorrs/bias/%s_%s.npy' % (samplename, binnum))
+		np.array([mass, avgmasserr]).dump('results/lensing_xcorrs/mass/%s_%s.npy' % (samplename, binnum))
 		modcf = lensingModel.biased_binned_x_power_spectrum(None, b, midzs, dndz)
 	else:
-		modcf = lensingModel.mass_biased_x_power_spectrum(None, b, midzs, dndz)
-	plotting.plot_each_lensing_fit(binnum, scales, power, power_err, modcf)
-	return [b, b_err, np.log10(masses), np.log10(massuperr), np.log10(massloerr)]
+		mass, mass_err = lensingModel.fit_mass(power, power_err, midzs, dndz)
+		print(mass, mass_err)
+		b, b_err = bias_tools.mass_to_avg_bias(mass, midzs, dndz, merr=[mass_err, mass_err])
+		np.array([b, b_err]).dump('results/lensing_xcorrs/bias/%s_%s.npy' % (samplename, binnum))
+		np.array([mass, mass_err]).dump('results/lensing_xcorrs/mass/%s_%s.npy' % (samplename, binnum))
+		modcf = lensingModel.mass_biased_x_power_spectrum(None, mass, midzs, dndz)
+	unbiased_cf = lensingModel.binned_x_power_spectrum(midzs, dndz)
+	plotting.plot_each_lensing_fit(binnum, int(np.max(tab['bin'])), scales, power, power_err, modcf, unbiased_cf)
+	return [b, b_err, mass, mass_err]
 
 
 def fit_lensing_by_bin(pool, samplename, mode='bias'):
@@ -53,12 +63,18 @@ def fit_lensing_by_bin(pool, samplename, mode='bias'):
 	binnums = np.arange(1, maxbin+1)
 	partial_fit = partial(fit_lensing_of_bin, samplename=samplename, mode=mode)
 	bs = list(pool.map(partial_fit, binnums))
-
 	medcolors = sample.get_median_colors(tab)
+	np.array([medcolors, np.array(bs)[:, 0], np.array(bs)[:, 1]]).dump('results/lensing_xcorrs/bias/%s.npy' %
+	                                                                   samplename)
+	np.array([medcolors, np.array(bs)[:, 2], np.array(bs)[:, 3]]).dump('results/lensing_xcorrs/mass/%s.npy' %
+	                                                                   samplename)
+
+	"""
 	if mode == 'bias':
 		plotting.bias_v_color(medcolors, np.array(bs)[:, 0], np.array(bs)[:, 1])
 		plotting.mass_v_color(medcolors, np.array(bs)[:, 2], np.array(bs)[:, 3] - np.array(bs)[:, 2],
-		                      np.array(bs)[:, 2] - np.array(bs)[:, 4])
+		                      np.array(bs)[:, 2] - np.array(bs)[:, 4])"""
+	plotting.mass_v_color(samplename)
 	pool.close()
 
 
@@ -88,4 +104,4 @@ if __name__ == "__main__":
 			pool.wait()
 			sys.exit(0)
 
-	fit_lensing_by_bin(pool, 'catwise_r90', mode='bias')
+	fit_lensing_by_bin(pool, 'catwise', mode='mass')
