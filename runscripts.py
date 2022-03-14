@@ -14,14 +14,14 @@ import stacking
 from source import catalog_tools
 
 from source import template_tools
-#template_tools.template_colors_by_z(np.linspace(0, 4, 200), filter1='z', filter2='W1', grid_factor=5)
-#template_tools.two_color_space('r', 'z', 'r', 'W2', vega=False)
+#template_tools.template_colors_by_z(np.linspace(0, 5, 200), filter1='W1', filter2='W3', grid_factor=5)
+#template_tools.two_color_space('r', 'W2', 'z', 'W2', vega=False)
 
 wisename = 'catwise'
 opticalname = 'ls'
 samplename = wisename + '_' + opticalname
 nside = 1024
-band1 = 'g'
+band1 = 'r'
 
 #catalog_tools.prep_cat_for_opt_match()
 
@@ -36,12 +36,12 @@ band1 = 'g'
 
 
 # clean up WISE AGN catalog, select magnitude measurements, perform cuts and masking
-sample.filter_table(criterion='r90', w1cut=17.5, pmsncut=5, lowzcut=1, highzcut=0, bands=['r','W2'])
+sample.filter_table(criterion='r90', w1cut=None, pmsncut=5, lowzcut=1, highzcut=1, bands=['r','W2'])
 #redshift_dists.match_to_spec_surveys(wisename, 2.5*u.arcsec)
 
 
 # bin sample by r-W2 color
-sample.bin_sample(wisename, 'color', band1='r', band2='W2', nbins=5, combinebins=3)
+sample.bin_sample(wisename, 'color', band1='r', band2='W2', nbins=2, combinebins=None)
 
 
 # ensure randoms match data

@@ -53,15 +53,18 @@ def fit_clustering_of_bin(binnum, samplename, mode='bias', hodmodel=None, n_mcmc
 		twomodcf = clusteringModel.angular_corr_func_in_bins(scales, zs=zspace, dn_dz_1=interp_dndz,
 		                hodparams=[centervals[0], centervals[1], centervals[2]],
 		                hodmodel=hodmodel, term='two')
+		bothmodcf = clusteringModel.angular_corr_func_in_bins(scales, zs=zspace, dn_dz_1=interp_dndz, hodparams=[
+			centervals[0], centervals[1], centervals[2]], hodmodel=hodmodel, term='both')
 
+		dmmod = clusteringModel.angular_corr_func_in_bins(scales, zs=zspace, dn_dz_1=interp_dndz, hodmodel='dm')
 
 
 		#dm_cf = clusteringModel.angular_corr_func_in_bins(scales, midzs, dndz)
 		##### FIXXX the scales to be averages in bins !!!!!!!!!!!!!
 		plotting.plot_each_cf_fit(binnum, int(np.max(tab['bin'])), np.logspace(np.log10(np.min(scales)),
-		                np.log10(np.max(scales)),
-		                len(onemodcf)), w, werr, onemodcf, twomodcf, dm_mod=twomodcf /
-		                (centervals[(nderived - 2) + ndim] ** 2))
+		                np.log10(np.max(scales)),len(onemodcf)), w, werr, onemodcf,
+		                dmmod * centervals[(nderived - 2) + ndim] ** 2, bothmodcf,
+		                dm_mod=dmmod)
 
 		b, berr, masses, massuperr, masslowerr = centervals[(nderived - 2) + ndim], higherss[(nderived - 2) + ndim], \
 		                        centervals[(nderived - 1) + ndim], higherss[(nderived - 1) + ndim], \
@@ -73,17 +76,18 @@ def fit_clustering_of_bin(binnum, samplename, mode='bias', hodmodel=None, n_mcmc
 
 	# or just fit the two-halo term as a biased dark matter tracer
 	else:
-
+		from source import bias_tools
 		b, b_err = clusteringModel.fit_bias(scales, w, werr, midzs, dndz, mode=mode)
 
-		masses, massuperr, massloerr = bias_tools.avg_bias_to_mass(b, midzs, dndz, b_err)
-		np.array([b, b_err]).dump('%s/%s_%s.npy' % (mode, samplename, binnum))
+
 		if mode == 'bias':
 			modcf = clusteringModel.biased_ang_cf(scales, b, midzs, dndz)
+			masses, massuperr, massloerr = bias_tools.avg_bias_to_mass(b, midzs, dndz, b_err)
 		else:
 			modcf = clusteringModel.mass_biased_ang_cf(scales, b, midzs, dndz)
-		plotting.plot_each_cf_fit(binnum, scales[:len(scales)-1], w, werr, modcf)
-		return [b, b_err, np.log10(masses), np.log10(massuperr), np.log10(massloerr)]
+			masses, massuperr, massloerr = b, b_err, b_err
+		#plotting.plot_each_cf_fit(binnum, scales[:len(scales)-1], w, werr, modcf)
+		return [b, b_err, masses, massuperr, massloerr]
 
 
 def fit_clustering_by_bin(pool, samplename, mode='bias', hodmodel=None, n_mcmc=None):
@@ -106,12 +110,15 @@ def fit_clustering_by_bin(pool, samplename, mode='bias', hodmodel=None, n_mcmc=N
 	np.array([medcolors, np.array(bs)[:, 0], np.array(bs)[:, 1]]).dump('results/clustering/bias/%s.npy' % samplename)
 	np.array([medcolors, np.array(bs)[:, 2], np.array(bs)[:, 3], np.array(bs)[:, 4]]).dump(
 		'results/clustering/mass/%s.npy' % samplename)
-	tothods = []
-	for j in range(maxbin):
-		tothods.append(hod_model.hod_total((np.array(bs)[:, 5])[j], modeltype=hodmodel))
+	if mode == 'hod':
+		tothods = []
+		for j in range(maxbin):
+			tothods.append(hod_model.hod_total((np.array(bs)[:, 5])[j], modeltype=hodmodel))
+		plotting.plot_hods(mass_space, tothods)
 	plotting.mass_v_color(samplename)
+	plotting.bias_v_color(samplename)
 
-	plotting.plot_hods(mass_space, tothods)
+
 	pool.close()
 
 

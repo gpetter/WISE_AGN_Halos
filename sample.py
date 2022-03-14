@@ -35,7 +35,9 @@ def cut_lowz(tab, bands):
 	                        resolved_tab['%smag' % bands[1]] - resolved_tab['W2mag'], m1, b1, m2, b2)
 	x_colors = tab['%smag' % bands[0]] - tab['W2mag']
 	y_colors = tab['%smag' % bands[1]] - tab['W2mag']
-	tab = tab[np.where((y_colors > (x_colors * m1 + b1)) | (y_colors > (b2 + (m2 * x_colors))))]
+	tab = tab[np.where(((y_colors > (x_colors * m1 + b1)) | (y_colors > (b2 + (m2 * x_colors)))) |
+	                   (np.logical_not(np.isfinite(tab['%smag' % bands[0]]))) |
+	                   (np.logical_not(np.isfinite(tab['%smag' % bands[1]]))))]
 	return tab
 
 def total_proper_motion(pmra, pmdec, dec, e_pmra, e_pmdec):
@@ -51,7 +53,7 @@ def total_proper_motion(pmra, pmdec, dec, e_pmra, e_pmdec):
 # choose which magnitudes, AGN criteria, magnitude cuts, etc and perform masking
 def filter_table(soln='mpro', criterion='r90', w2cut=9, w1cut=None, pmsncut=None, sepcut=None, nbcut=None,
                  lowzcut=False, highzcut=False, bands=['r', 'W2']):
-	cat = Table.read('catalogs/catwise_r75pm_ls.fits')
+	cat = Table.read('catalogs/catwise_r75_ls.fits')
 	if criterion == 'r90':
 		alpha, beta, gamma = 0.65, 0.153, 13.86
 	elif criterion == 'r75':
@@ -81,10 +83,10 @@ def filter_table(soln='mpro', criterion='r90', w2cut=9, w1cut=None, pmsncut=None
 		      (100. * (len(cat) - len(goodidxs[0]))/float(len(cat)), pmsncut))
 		cat = cat[goodidxs]
 
-	if nbcut is not None:
-		cat = cat[np.where(cat['nb'] < nbcut)]
+	#if nbcut is not None:
+	#	cat = cat[np.where(cat['nb'] < nbcut)]
 	if sepcut is not None:
-		cat['dered_mag_%s' % bands[0]][np.where(cat['sep'] > sepcut)] = np.nan
+		cat['dered_mag_%s' % bands[0]][np.where(cat['cw_ls_dist'] > sepcut)] = np.nan
 
 	masking.total_mask(depth_cut=150, assef=1, unwise=1, planck=1, bright=1, ebv=1, ls_mask=0, zero_depth_mask=1)
 
@@ -94,9 +96,9 @@ def filter_table(soln='mpro', criterion='r90', w2cut=9, w1cut=None, pmsncut=None
 	randcat = masking.mask_tab(randcat)
 	randcat = randcat[:int(3e7)]
 
-	newcat = cat['RA', 'DEC', 'W1%s' % soln, 'W2%s' % soln,'e_W1%s' % soln, 'e_W2%s' % soln, 'dered_mag_g',
+	newcat = cat['id', 'RA', 'DEC', 'W1%s' % soln, 'W2%s' % soln,'e_W1%s' % soln, 'e_W2%s' % soln, 'dered_mag_g',
 	             'dered_mag_r', 'dered_mag_z', 'W3mag', 'e_W3mag', 'W4mag', 'e_W4mag', 'ab_flags', 'pm', 'e_pm',
-	             'nb', 'maskbits']
+	             'maskbits']
 	oldnames = ('W1%s' % soln, 'W2%s' % soln,'e_W1%s' % soln, 'e_W2%s' % soln, 'dered_mag_g',
 	             'dered_mag_r', 'dered_mag_z')
 	newnames = ('W1mag', 'W2mag', 'e_W1mag', 'e_W2mag', 'gmag', 'rmag', 'zmag')
@@ -123,11 +125,11 @@ def filter_table(soln='mpro', criterion='r90', w2cut=9, w1cut=None, pmsncut=None
 		newcat = cut_lowz(newcat, ['r', 'z'])
 
 	if highzcut:
-		#newcat = newcat[np.where(np.logical_not(newcat['zmag'] - newcat['W2mag'] < 4))]
-		newcat = newcat[np.where(np.logical_not(newcat['gmag'] - newcat['W2mag'] < 4.5))]
+		newcat = newcat[np.where((np.logical_not(newcat['zmag'] - newcat['W2mag'] < 4.5)))]
+		#newcat = newcat[np.where(np.logical_not(newcat['gmag'] - newcat['W2mag'] < 4.5))]
 
-	newcat = newcat[np.where((newcat['%smag' % bands[1]] > 0) & (np.isfinite(newcat['%smag' % bands[1]])) & (
-		np.isfinite(newcat['%smag' % bands[0]])) & (np.isfinite(newcat['%smag' % bands[0]])))]
+	#newcat = newcat[np.where((newcat['%smag' % bands[1]] > 0) & (np.isfinite(newcat['%smag' % bands[1]])) & (
+	#	np.isfinite(newcat['%smag' % bands[0]])) & (np.isfinite(newcat['%smag' % bands[0]])))]
 	newcat.write('catalogs/derived/catwise_filtered.fits', format='fits', overwrite=True)
 	randcat.write('catalogs/derived/ls_randoms_1_filtered.fits', format='fits', overwrite=True)
 

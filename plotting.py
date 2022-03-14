@@ -318,11 +318,13 @@ def plot_each_sed(binnum, nbins, wavelengths, nufnu, nufnu_err):
 	plt.savefig('plots/seds/%s.pdf' % binnum)
 	plt.close('all')
 
-def plot_composite_sed(nbins, wavelength_bins, binned_nu_f_nu):
+def plot_composite_sed(nbins, wavelength_bins, binned_nu_f_nu, lowerrs, uperrs):
 	plt.figure(figsize=(8, 7))
 	colors = return_colorscheme(nbins)
 	for j in range(nbins):
+
 		plt.plot(wavelength_bins, binned_nu_f_nu[j], color=colors[j], alpha=0.5)
+		plt.errorbar(wavelength_bins, binned_nu_f_nu[j], yerr=[lowerrs[j], uperrs[j]], ecolor=colors[j], fmt='none')
 	#plt.errorbar(wavelength_bins, binned_nu_f_nu, yerr=nufnu_err, ecolor='k', alpha=0.5, fmt='none')
 
 	plt.yscale('log')
@@ -334,7 +336,7 @@ def plot_composite_sed(nbins, wavelength_bins, binned_nu_f_nu):
 
 
 
-def plot_each_cf_fit(bin, nbins, scales, cf, cferr, cf_mod_one, cf_mod_two, dm_mod=None):
+def plot_each_cf_fit(bin, nbins, scales, cf, cferr, cf_mod_one, cf_mod_two, cf_mod_both, dm_mod=None):
 	plt.figure(figsize=(8,7))
 
 	colors = return_colorscheme(nbins)
@@ -342,7 +344,7 @@ def plot_each_cf_fit(bin, nbins, scales, cf, cferr, cf_mod_one, cf_mod_two, dm_m
 	plt.errorbar(scales, cf, yerr=cferr, fmt='none', ecolor=colors[bin - 1])
 	plt.plot(scales, cf_mod_one, c='k', ls='dashdot', label='HOD 1-Halo', alpha=0.5)
 	plt.plot(scales, cf_mod_two, c='k', ls='dotted', label='HOD 2-Halo', alpha=0.5)
-	plt.plot(scales, cf_mod_one + cf_mod_two, ls='dashed', c=colors[bin - 1], label='HOD Total')
+	plt.plot(scales, cf_mod_both, ls='dashed', c=colors[bin - 1], label='HOD Total')
 	if dm_mod is not None:
 		plt.plot(scales, dm_mod, c='k', ls='dashed', label='2-Halo Dark Matter')
 	plt.xscale('log')
@@ -372,14 +374,27 @@ def plot_each_lensing_fit(bin, nbins, scales, power, power_err, cf_mod, unbiased
 	plt.close('all')
 
 
-def bias_v_color(medcolors, bias, biaserrs):
+def bias_v_color(samplename):
+	offset = 0.05
+
+	lens_results = np.load('results/lensing_xcorrs/bias/%s.npy' % samplename, allow_pickle=True)
+
+	clustering_results = np.load('results/clustering/bias/%s.npy' % samplename, allow_pickle=True)
+
+	medcolors, lensbias, lensbias_err = lens_results[0], lens_results[1], lens_results[2]
+	medcolors, cfbias, cfbias_err = clustering_results[0], clustering_results[1], clustering_results[2]
+
 	plt.figure(figsize=(8, 7))
 	cs = return_colorscheme(len(medcolors))
-	plt.scatter(medcolors, bias, color=cs)
-	plt.errorbar(medcolors, bias, yerr=biaserrs, ecolor=cs, fmt='none')
+	plt.scatter(medcolors - offset, lensbias, edgecolors=cs, facecolors='none', label='CMB Lensing Result')
+	plt.errorbar(medcolors - offset, lensbias, yerr=lensbias_err, ecolor=cs, fmt='none')
+
+	plt.scatter(medcolors + offset, cfbias, color=cs, label='Angular Clustering Result')
+	plt.errorbar(medcolors + offset, cfbias, yerr=cfbias_err, fmt='none', ecolor=cs)
 
 	plt.xlabel(r'$\langle r - W2 \rangle$', fontsize=20)
 	plt.ylabel(r'$b_{q}$', fontsize=20)
+	plt.legend(fontsize=20)
 
 	plt.savefig('plots/bias_v_color.pdf')
 	plt.close('all')
@@ -388,6 +403,43 @@ def bias_v_color(medcolors, bias, biaserrs):
 def mass_v_color(samplename):
 	plt.close('all')
 	plt.figure(figsize=(8, 7))
+	offset = 0.05
+
+	obsqsos = Table.read('catalogs/dipomp/obscured.fits')
+	unobsqsos = Table.read('catalogs/dipomp/unobscured.fits')
+
+	def smooth(y, box_pts):
+		box = np.ones(box_pts) / box_pts
+		y_smooth = np.convolve(y, box, mode='same')
+		return y_smooth
+
+	ndipompbins = 1000
+
+	unobs_hist = np.histogram(unobsqsos['RMAG'] - unobsqsos['W2'] - 3.339, ndipompbins, range=(0, 6 - 3.339))
+	unobs_alphas = unobs_hist[0] / np.max(unobs_hist[0])
+	smooth_unob_alphas = smooth(unobs_alphas, 300)
+
+	det_obs_cat = obsqsos[np.where(obsqsos['RMAG'] > 0)]
+
+	obs_hist = np.histogram(det_obs_cat['RMAG'] - det_obs_cat['W2'] - 3.339, ndipompbins, range=(6 - 3.339, 6))
+	obs_alphas = obs_hist[0] / np.max(unobs_hist[0])
+	smooth_obs_alphas = smooth(obs_alphas, 300)
+
+
+	plt.figure(figsize=(8, 7))
+
+	im1 = plt.imshow(np.outer(np.ones(ndipompbins), smooth_unob_alphas), cmap=cm.Blues,
+	                 extent=[0, 6 - 3.339, 12.49 - 0.1, 12.49 + 0.1],
+	                 interpolation="bicubic", alpha=.4, aspect="auto")
+
+	im2 = plt.imshow(np.outer(np.ones(ndipompbins), smooth_obs_alphas), cmap=cm.Reds,
+	                 extent=[6 - 3.339, 6, 12.94 - 0.08, 12.94 + 0.08],
+	                 interpolation="bicubic", alpha=.4, aspect="auto", label='D+17 Obscured')
+
+
+	#plt.text(0.8, 12.94, 'D+17 Obscured', fontsize=20, c='red', alpha=0.5)
+	#plt.text(3, 12.49, 'D+17 Unobscured', fontsize=20, c='blue', alpha=0.4)
+
 
 
 	lens_results = np.load('results/lensing_xcorrs/mass/%s.npy' % samplename, allow_pickle=True)
@@ -398,11 +450,11 @@ def mass_v_color(samplename):
 	medcolors, cfmass, cfmassloerrs, cfmasshierrs = clustering_results[0], clustering_results[1], \
 	                                                clustering_results[2], clustering_results[3]
 
-	plt.scatter(medcolors, lensmass, edgecolors=cs, facecolors='none', label='CMB Lensing Result')
-	plt.errorbar(medcolors, lensmass, yerr=lensmasserrs, ecolor=cs, fmt='none')
+	plt.scatter(medcolors - offset, lensmass, edgecolors=cs, facecolors='none', label='CMB Lensing Result')
+	plt.errorbar(medcolors - offset, lensmass, yerr=lensmasserrs, ecolor=cs, fmt='none')
 
-	plt.scatter(medcolors, cfmass, color=cs, label='Angular Clustering Result')
-	plt.errorbar(medcolors, cfmass, yerr=[cfmassloerrs, cfmasshierrs], fmt='none', ecolor=cs)
+	plt.scatter(medcolors + offset, cfmass, color=cs, label='Angular Clustering Result')
+	plt.errorbar(medcolors + offset, cfmass, yerr=[cfmassloerrs, cfmasshierrs], fmt='none', ecolor=cs)
 
 	plt.xlabel(r'$\langle r - W2 \rangle$', fontsize=20)
 	plt.ylabel(r'$\mathrm{log}_{10}(M_h / h^{-1} M_{\odot})$', fontsize=20)
@@ -709,4 +761,42 @@ def hod_corner(flatchain, ndim, binnum, nbins):
 	)
 
 	plt.savefig("plots/cf_fits/hod_params_%s.pdf" % binnum)
+	plt.close('all')
+
+def plot_every_observed_sed(fluxtable, fluxerrtable, eff_wavelengths, zs, ids=None):
+	obs_nus = 2.998e14 / np.array(eff_wavelengths)
+
+	for j in range(len(fluxtable)):
+		plt.close('all')
+		plt.figure(figsize=(8,7))
+		thisflux, thisfluxerr = np.array(list(fluxtable[j])).astype(np.float64), \
+		                        np.array(list(fluxerrtable[j])).astype(np.float64)
+
+		thisflux[np.where(thisflux < 0)] = np.nan
+		thisfluxerr[np.where(thisfluxerr < 0)] = np.nan
+		thisflux = obs_nus * thisflux
+		thisfluxerr = obs_nus * thisfluxerr
+		plt.scatter(eff_wavelengths, thisflux, c='k')
+		plt.errorbar(eff_wavelengths, thisflux, yerr=thisfluxerr, ecolor='k', fmt='none')
+		plt.xlabel(r'$\lambda_{obs} [\mu m]$', fontsize=20)
+		plt.ylabel(r'$\nu_{obs} F_{\nu}$', fontsize=20)
+		plt.xscale('log')
+		plt.yscale('log')
+		plt.title(r'$z = %s $' % zs[j], fontsize=20)
+		plt.xlim(1e-1, 5e2)
+		plt.savefig('plots/individual_seds/%s.pdf' % j)
+		plt.close('all')
+
+def plot_luminosity_distributions(medlum, lumratios):
+	colors = return_colorscheme(len(lumratios))
+
+	plt.close('all')
+	plt.figure(figsize=(8, 7))
+	for j in range(len(lumratios)):
+		lums = np.log10(medlum * np.array(lumratios[j]))[0]
+		lums = lums[np.where(np.isfinite(lums))]
+		plt.hist(lums, bins=30, histtype='step', color=colors[j])
+	plt.xlabel(r'log$_{10}(\nu L_{\nu}(6 \mu m))$', fontsize=20)
+	plt.ylabel('Frequency', fontsize=20)
+	plt.savefig('plots/lum_distributions.pdf')
 	plt.close('all')

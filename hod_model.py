@@ -12,7 +12,7 @@ from scipy.special import sici
 
 
 
-cosmo = cosmology.setCosmology('planck18')
+cosmo = cosmology.setCosmology('planck15')
 apcosmo = cosmo.toAstropy()
 
 
@@ -177,8 +177,10 @@ def n_central(masses, params, modelname='zheng07'):
 		                            params[param_keys['logM1']])[0]
 	elif modelname == '1param':
 		mean_ncen = one_param_hod(masses, params[param_keys['logMmin']])[0]
+	elif modelname == 'dm':
+		return np.zeros(len(masses))
 	else:
-		return 'error'
+		return None
 
 
 	return mean_ncen
@@ -197,8 +199,10 @@ def n_satellites(masses, params, modelname='zheng07'):
 		                            params[param_keys['logM1']])[1]
 	elif modelname == '1param':
 		mean_nsat = one_param_hod(masses, params[param_keys['logMmin']])[1]
+	elif modelname == 'dm':
+		return np.zeros(len(masses))
 	else:
-		return 'error'
+		return None
 
 	return mean_nsat
 
@@ -217,15 +221,18 @@ def avg_number_density(hmf, hod):
 
 
 def one_halo_power_spectrum(hmf, u_of_k_for_m, n_cen, n_sat, z, params, modeltype='zheng07'):
-	force_turnover = False
+	if modeltype == 'dm':
+		return np.zeros(len(k_grid))
+	else:
+		force_turnover = False
 
 
-	integrand = hmf * (2 * n_cen * n_sat * u_of_k_for_m + ((n_sat * u_of_k_for_m) ** 2))
-	avg_dens = avg_number_density(hmf, (n_cen+n_sat))
-	integral = (1 / avg_dens ** 2) * np.trapz(integrand, dx=np.log(mass_grid)[1] - np.log(mass_grid)[0])
-	if force_turnover:
-		integral[np.where(k_grid < 1e-2)] = 0.
-	return integral
+		integrand = hmf * (2 * n_cen * n_sat * u_of_k_for_m + ((n_sat * u_of_k_for_m) ** 2))
+		avg_dens = avg_number_density(hmf, (n_cen+n_sat))
+		integral = (1 / avg_dens ** 2) * np.trapz(integrand, dx=np.log(mass_grid)[1] - np.log(mass_grid)[0])
+		if force_turnover:
+			integral[np.where(k_grid < 1e-2)] = 0.
+		return integral
 
 
 def halo_halo_power_spectrum(m1, m2, z):
@@ -240,7 +247,7 @@ def b_eff_of_z(hmf, hod, avg_dens, z):
 	                                   hod * hmf, x=np.log(mass_grid))
 	return beff_z
 
-def two_halo_power_spectrum(hmf, u_of_k_for_m, n_cen, n_sat, z, params, modeltype='zheng07'):
+def two_halo_power_spectrum(hmf, u_of_k_for_m, n_cen, n_sat, z, modeltype='zheng07'):
 	avg_dens = avg_number_density(hmf, (n_cen + n_sat))
 
 	# do full double integral. !!!! doesn't work, use single integral
@@ -263,13 +270,16 @@ def two_halo_power_spectrum(hmf, u_of_k_for_m, n_cen, n_sat, z, params, modeltyp
 
 
 	else:
-		bias_grid = bias.haloBias(mass_grid, z, mdef='200c', model='tinker10')
-		integrand = hmf * bias_grid * (n_cen + n_sat) * u_of_k_for_m
-		integral = np.trapz(integrand, x=np.log(mass_grid))
-		return (1 / avg_dens ** 2) * (integral ** 2) * cosmo.matterPowerSpectrum(k_grid, z) * \
-		       (u.Mpc / u.littleh) ** 3
-		#yyi= (b_eff_of_z(hmf=hmf, hod=(n_cen + n_sat), avg_dens=avg_dens, z=z) ** 2) * cosmo.matterPowerSpectrum(
-		#				k_grid, z) * (u.Mpc / u.littleh) ** 3
+		if modeltype == 'dm':
+			return cosmo.matterPowerSpectrum(k_grid, z) * (u.Mpc / u.littleh) ** 3
+		else:
+			bias_grid = bias.haloBias(mass_grid, z, mdef='200c', model='tinker10')
+			integrand = hmf * bias_grid * (n_cen + n_sat) * u_of_k_for_m
+			integral = np.trapz(integrand, x=np.log(mass_grid))
+			#return (1 / avg_dens ** 2) * (integral ** 2) * cosmo.matterPowerSpectrum(k_grid, z) * \
+			#       (u.Mpc / u.littleh) ** 3
+			return (b_eff_of_z(hmf=hmf, hod=(n_cen + n_sat), avg_dens=avg_dens, z=z) ** 2) * \
+			       cosmo.matterPowerSpectrum( k_grid, z) * (u.Mpc / u.littleh) ** 3
 
 
 
@@ -285,16 +295,19 @@ def effective_bias(hmf, hod, avg_dens, zs, dndz):
 
 	beff_zs = 1. / avg_dens * np.trapz(bofm_z * hod * hmf, x=np.log(mass_grid))
 
-	return np.average(beff_zs, weights=dndz)
+
+	return np.average(beff_zs, weights=(dndz ** 2))
+	#return np.trapz(beff_zs * dndz, x=zs)
 
 
-def log_effective_mass(hmf, hod, avg_dens, dndz):
+def log_effective_mass(hmf, hod, avg_dens, zs, dndz):
 
 
 	meff_zs = 1. / avg_dens * np.trapz(mass_grid * hod * hmf, x=np.log(mass_grid))
 
 
-	return np.average(np.log10(meff_zs), weights=dndz)
+	return (np.average(np.log10(meff_zs), weights=(dndz ** 2)))
+	#return np.log10(np.trapz(meff_zs * dndz, x=zs))
 
 
 def satellite_fraction(hmf, n_sat, avg_dens, dndz):
@@ -325,7 +338,7 @@ def power_spectra_for_zs(zs, params, modeltype='zheng07'):
 
 	for j in range(len(zs)):
 		onehalos.append(one_halo_power_spectrum(hmf_of_z[j], uk_m_z[j], n_cen, n_sat, zs[j], params, modeltype))
-		twohalos.append(two_halo_power_spectrum(hmf_of_z[j], uk_m_z[j], n_cen, n_sat, zs[j], params, modeltype))
+		twohalos.append(two_halo_power_spectrum(hmf_of_z[j], uk_m_z[j], n_cen, n_sat, zs[j], modeltype))
 
 	return onehalos, twohalos
 
@@ -335,7 +348,7 @@ def derived_parameters(zs, dndz, params, modeltype='zheng07'):
 	avg_dens_of_z = avg_number_density(hmf_of_z, (n_cen + n_sat))
 
 	beff = effective_bias(hmf_of_z, (n_cen + n_sat), avg_dens_of_z, zs, dndz)
-	meff = log_effective_mass(hmf_of_z, (n_cen + n_sat), avg_dens_of_z, dndz)
+	meff = log_effective_mass(hmf_of_z, (n_cen + n_sat), avg_dens_of_z, zs, dndz)
 	f_sat = satellite_fraction(hmf_of_z, n_sat, avg_dens_of_z, dndz)
 	if modeltype == '1param':
 		return beff, meff
@@ -361,38 +374,60 @@ def compare_angcfs():
 	import clusteringModel
 	import importlib
 	importlib.reload(clusteringModel)
+	thetagrid = np.logspace(-3, 0.1, 1000)
+	zmiddle = 3
 
 	hm2 = halomod.integrate_corr.AngularCF(
-		z=1.5,
-		zmin=1.49, zmax=1.51, znum=2,  # Redshift
-		Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
-		theta_min=(1e-3)/180.*np.pi, theta_max=1/180.*np.pi,
+		z=zmiddle,
+		zmin=zmiddle - 0.001, zmax=zmiddle + 0.001, znum=20,  # Redshift
+		Mmin=10, Mmax=15., transfer_model='EH', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
+		theta_min=np.min(thetagrid)/180.*np.pi, theta_max=np.max(thetagrid)/180.*np.pi, theta_num=len(thetagrid),
+		theta_log=True, cosmo_model='Planck15',
 		hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.},
 		exclusion_model=None, halo_concentration_model='Ludlow16', mdef_model='SOCritical', hm_dlog10k=0.008,
-		force_1halo_turnover=True)
+		force_1halo_turnover=False, bias_model='Tinker10')
 
-	mymodel = clusteringModel.angular_corr_func(np.logspace(-3, 0, 30), np.array([1.49, 1.51]), np.array([50, 50]),
+	zlist = np.linspace(zmiddle - 0.001, zmiddle + 0.001, 1000)
+	zhist = np.histogram(zlist, density=True, bins=20)
+	myzs, mydndz = zhist[1][:len(zhist[1]) - 1], zhist[0]
+	print('b_eff_halomod: %s' % hm2.bias_effective_tracer)
+	print('b_eff_mine: %s' % derived_parameters(myzs, mydndz, params=[12., 1., 12.5], modeltype='3param')[1])
+
+	print('m_eff_halomod: %s' % hm2.mass_effective)
+	print('m_eff_mine: %s' % derived_parameters(myzs, mydndz, params=[12., 1., 12.5], modeltype='3param')[2])
+
+	mymodel = clusteringModel.angular_corr_func(thetagrid, myzs, mydndz,
 		hodparams=[12., 1., 12.5], hodmodel='3param')
+
 
 	plt.figure(figsize=(8,7))
 	plt.plot(hm2.theta*180./np.pi, hm2.angular_corr_gal, label='halomod')
 
 
+
 	#plt.plot(hm_smt3.r, hm_smt3.corr_1h_auto_tracer, label='1h')
 	#plt.plot(hm_smt3.r, hm_smt3.corr_2h_auto_tracer, label='2h')
-	plt.plot(np.logspace(-3, 0, 30), mymodel, label='my 1h')
+	#plt.plot(np.logspace(-3, 0, 30), mymodel, label='my 1h')
 
-	#plt.plot(np.logspace(-3, 0, 30), mymodel, label='my model')
+	plt.plot(thetagrid, mymodel, label='my model')
 	plt.xscale('log')
 	plt.yscale('log')
-	plt.ylim(1e-2, 1e3)
+	#plt.ylim(1e-2, 1e3)
 	plt.legend()
 	plt.xlabel(r'$\theta$', fontsize=20)
 	plt.ylabel(r'$w(\theta)$', fontsize=20)
 	plt.savefig('plots/halomod/modelcf_test.pdf')
-	plt.close('all')
 
 	plt.close('all')
+	plt.figure(figsize=(8, 7))
+	plt.plot(thetagrid, mymodel / hm2.angular_corr_gal, label='my model')
+	plt.xscale('log')
+	plt.xlabel(r'$\theta$', fontsize=20)
+	plt.ylabel(r'$w(\theta)$ ratio', fontsize=20)
+	plt.savefig('plots/halomod/modelcf_ratio.pdf')
+	plt.close('all')
+
+
 
 def compare_ukm():
 	import halomod
@@ -466,23 +501,29 @@ def compare_nfwruns():
 def compare_powspec():
 	import halomod
 	import matplotlib.pyplot as plt
+	plt.close('all')
 	plt.figure(figsize=(8, 7))
 	hm_smt3 = halomod.TracerHaloModel(
-		z=0., cosmo_model='Planck15',
+		z=1.5, cosmo_model='Planck15',
 		Mmin=9, Mmax=15., transfer_model='CAMB', hod_model='Zheng05', hm_logk_min=-5, hm_logk_max=3,
 		hod_params={'M_min': 12., 'M_1': 12.5, 'alpha': 1., 'sig_logm': 0.25, 'M_0': 12.}, takahashi=False,
 		exclusion_model=None, halo_concentration_model='Ludlow16Empirical', mdef_model='SOCritical', hm_dlog10k=0.008,
 		force_1halo_turnover=False, mdef_params={'overdensity': 200}
 	)
-	k_grid = hm_smt3.k_hm * u.littleh / u.Mpc
-	onepk, twopk = redshift_averaged_power_spectra(k_grid, [2, 2], [0.5, 0.5], [12., 1., 12.5], '3param')
+	newk_grid = hm_smt3.k_hm * u.littleh / u.Mpc
+	#onepk, twopk = redshift_averaged_power_spectra(k_grid, [2, 2], [0.5, 0.5], [12., 1., 12.5], '3param')
+	onepk, twopk = power_spectra_for_zs([1.5], params=[12., 1., 12.5], modeltype='3param')
 
 
-	#plt.plot(hm_smt3.k_hm, hm_smt3.power_auto_tracer, c='b')
+	plt.plot(hm_smt3.k_hm, hm_smt3.power_auto_tracer, c='b')
 
-	#totpk = onepk + twopk
+	totpk = np.array(onepk[0]) + np.array(twopk[0])
 	#plt.plot(k_grid, totpk / hm_smt3.power_auto_tracer)
-	#plt.plot(k_grid, totpk, c='k', ls='--')
+	plt.plot(newk_grid, totpk, c='k', ls='--')
+	plt.yscale('log')
+	plt.xscale('log')
+	plt.savefig('plots/halomod/power_spectra.pdf')
+	plt.close('all')
 	#plt.plot(k_grid, onepk, c='k', ls='-.')
 	#plt.plot(hm_smt3.k_hm, hm_smt3.power_1h_auto_tracer, label='HALOMOD-1h z=2', linewidth=5)
 	#plt.plot(k_grid, onepk, c='k', ls='--', label='my 1h z=2')
@@ -509,3 +550,4 @@ def plot_hod(params, modeltype):
 	plt.close('all')
 
 
+#compare_angcfs()

@@ -54,15 +54,36 @@ bootes_filterset = ['FUV', 'NUV',
 best_filterset = ['u', 'g', 'r', 'i', 'z', 'y', 'j', 'h', 'k', 'ks', 'irac_i1', 'irac_i2', 'irac_i3', 'irac_i4',
                   'mips_24', 'pacs_green', 'pacs_red', 'spire_250', 'spire_350', 'spire_500']
 
-good_fields = ['xmm_lss']
+good_fields = ['bootes', 'cdfs_swire', 'elais_n1', 'elais_s1', 'lockman_swire', 'xmm_lss']
 
-
+# fluxes in muJy below which the HELP algorithm deems posterior estimates of flux become non-gaussian
 mips_gauss_cut = {'akari_nep': 30, 'akari_sep': 40, 'bootes': 20,
 		'cdfs_swire': 20, 'cosmos': 0,
 		'elais_n1': 20, 'elais_n2': 20,
 		'elais_s1': 30, 'lockman_swire': 20,
 		'spire_nep': 20, 'xfls': 20,
 		'xmm_lss': 0}
+
+spire_250_gauss_cut = {'akari_nep': 5000, 'bootes': 5000,
+		'cdfs_swire': 4000,
+		'elais_n1': 4000, 'elais_n2': 4000,
+		'elais_s1': 4000, 'lockman_swire': 4000,
+		'spire_nep': 6000, 'xfls': 4000,
+		'xmm_lss': 4000}
+
+spire_350_gauss_cut = {'akari_nep': 5000, 'bootes': 5000,
+		'cdfs_swire': 4000,
+		'elais_n1': 4000, 'elais_n2': 4000,
+		'elais_s1': 4000, 'lockman_swire': 4000,
+		'spire_nep': 6000, 'xfls': 4000,
+		'xmm_lss': 4000}
+
+spire_500_gauss_cut = {'akari_nep': 6000, 'bootes': 10000,
+		'cdfs_swire': 6000,
+		'elais_n1': 4000, 'elais_n2': 4000,
+		'elais_s1': 6000, 'lockman_swire': 6000,
+		'spire_nep': 6000, 'xfls': 4000,
+		'xmm_lss': 4000}
 
 def write_ascii_table(match_radius=2*u.arcsec):
 	tab = Table.read('catalogs/derived/catwise_r90_cosmos_zs.fits')
@@ -300,22 +321,26 @@ def peak_wavelengths_from_filters(filterset):
 
 
 
-def plot_each_observed_sed(table, filterset):
+def plot_each_observed_sed(table, filternames):
 	import plotting
 	oldplots = glob.glob('plots/individual_seds/*')
 	for oldplot in oldplots:
 		os.remove(oldplot)
-	table = append_data(table, filterset)
-	wavelengths = peak_wavelengths_from_filters(filterset)
-	cigale_names, cigale_err_names, fullfilters, fullerrfilters = convert_filternames(filterset)
+	table = append_data(table, filternames)
+	wavelengths = peak_wavelengths_from_filters(filternames)
 
+	#cigale_names, cigale_err_names, fullfilters, fullerrfilters = convert_filternames(filterset)
+	fullfilternames = ['f_best_%s' % filternames[k] if k < len(filternames) - 10 else 'f_%s' % filternames[k] for k in
+	                   range(len(filternames))]
+	fullerrnames = ['ferr_best_%s' % filternames[k] if k < len(filternames) - 10 else 'ferr_%s' % filternames[k]
+	                for k in range(len(filternames))]
 
-	fluxtable = table[fullfilters]
+	fluxtable = table[fullfilternames]
 
-	fluxerrtable = table[fullerrfilters]
+	fluxerrtable = table[fullerrnames]
 	# redshifts =
 	plotting.plot_every_observed_sed(fluxtable=fluxtable.as_array(), fluxerrtable=fluxerrtable.as_array(),
-	                                 eff_wavelengths=wavelengths)
+	                                 eff_wavelengths=wavelengths, zs=table['Z_best'])
 
 def in_help_moc(ras, decs, helpfield):
 	fieldmoc = MOC.from_fits('../data/HELP/%s/moc.fits' % helpfield)
@@ -473,16 +498,49 @@ def complete_masking(helpfield):
 	agncat = Table.read('catalogs/derived/catwise_binned.fits')
 	agncat = agncat[in_help_moc(agncat['RA'], agncat['DEC'], helpfield)]
 
+
 	agncat = agncat[mask_star_regions(agncat['RA'] * u.deg, agncat['DEC'] * u.deg, helpfield)]
+
 	agncat = agncat[np.where(agncat['W2mag'] > 13)]
 	agncat = agncat[get_objects_in_spitzer_footprint(agncat['RA'], agncat['DEC'], helpfield, w2_vega_limit=17,
 	                                                 cade_masks=True)]
+
 	agncat = agncat[get_objects_with_k_imaging(agncat['RA'], agncat['DEC'], 20, helpfield)]
+
 	agncat.write('../data/HELP/%s/wise_agn.fits' % helpfield, format='fits', overwrite=True)
 
 	match_help_catwise(agncat['RA'], agncat['DEC'], agncat['bin'], helpfield)
 
 
+
+def tap_help_master_list(helpfield):
+	fieldtranslations = {'s82': 'Herschel-Stripe-82', 'ssdf': 'SSDF'}
+	print('matching %s to master-list' % helpfield)
+	import pyvo as vo
+	from math import ceil
+	service = vo.dal.TAPService("https://herschel-vos.phys.sussex.ac.uk/__system__/tap/run/tap")
+	agntab = Table.read('catalogs/derived/catwise_binned.fits')
+	agntab = agntab[in_help_moc(agntab['RA'], agntab['DEC'], helpfield)]
+	agntab = agntab['RA', 'DEC']
+	print(len(agntab))
+	chunksize = 1000
+	nchunks = ceil(len(agntab) / chunksize)
+	print(nchunks)
+	runningtab = []
+	for j in range(nchunks):
+		print(j)
+		chunktab = agntab[j * chunksize : (j+1) * chunksize]
+		adql = """SELECT
+	                db.ra, db.dec, db.m_ap_irac_i2
+	                    FROM herschelhelp.main AS db
+	                        JOIN TAP_UPLOAD.agntab AS tc
+	                            ON 1=CONTAINS(POINT('ICRS', db.ra, db.dec),
+	                            CIRCLE('ICRS', tc.ra, tc.dec, 2.5/3600.))"""
+		resultcat = service.search(adql, uploads={'agntab': chunktab})
+		resultcat = resultcat.to_table()
+		runningtab.append(resultcat)
+	finaltab = vstack(runningtab)
+	finaltab.write('../data/HELP/%s/%s_sparse.fits' % (helpfield, helpfield), format='fits', overwrite=True)
 
 
 def tap_help_a_list(helpfield):
@@ -504,8 +562,16 @@ def tap_help_a_list(helpfield):
 
 def make_master_catalog(fields):
 	t = Table.read('../data/HELP/%s/%s_a_list.fits' % (fields[0], fields[0]))
-	for j in range(len(fields) - 1):
-		t = vstack((t, Table.read('../data/HELP/%s/%s_a_list.fits' % (fields[j], fields[j]))))
+
+	t['250_nongauss'] = np.int32((t['f_spire_250'] < spire_250_gauss_cut[fields[0]]))
+	t['350_nongauss'] = np.int32((t['f_spire_350'] < spire_350_gauss_cut[fields[0]]))
+	t['500_nongauss'] = np.int32((t['f_spire_500'] < spire_500_gauss_cut[fields[0]]))
+	for j in range(len(fields)):
+		newt = Table.read('../data/HELP/%s/%s_a_list.fits' % (fields[j], fields[j]))
+		newt['250_nongauss'] = np.int32((newt['f_spire_250'] < spire_250_gauss_cut[fields[j]]))
+		newt['350_nongauss'] = np.int32((newt['f_spire_350'] < spire_350_gauss_cut[fields[j]]))
+		newt['500_nongauss'] = np.int32((newt['f_spire_500'] < spire_500_gauss_cut[fields[j]]))
+		t = vstack((t, newt))
 	t['Z_best'] = t['redshift']
 	goodspecz = np.where((t['zspec'] > 0) & (t['zspec'] < 10))
 	t['Z_best'][goodspecz] = t['zspec'][goodspecz]
@@ -523,55 +589,6 @@ def prepare_help_data(fields):
 
 
 
-
-# actually don't need this, objects already force photometered when possible
-def get_upper_limits(alistcatalog, helpfield):
-	# use only the bands in the A-list HELP catalog
-	best_bands = ['u', 'g', 'r', 'i', 'z', 'y', 'j', 'h', 'k', 'ks']
-	# read depth map
-	depth_map = Table.read('../data/HELP/%s/depths.fits' % helpfield)
-
-	# healpix indices corresponding to positions in the catalog
-	hppix = hp.ang2pix(nside=hp.order2nside(13), theta=alistcatalog['ra'], phi=alistcatalog['dec'],
-	                   lonlat=True, nest=True)
-	uniqpix = np.unique(hppix)
-
-	# for every band
-	for eachband in best_bands:
-		# see if the depth map and the catalog actually contain that band
-		currentdepth = -1
-		try:
-			foo = depth_map['ferr_ap_%s_mean' % eachband]
-
-			for pix in uniqpix:
-				nondetection_and_in_depth_map = \
-					np.where(np.logical_not((np.isfinite(alistcatalog['ferr_best_%s' % eachband]))) &
-				                                         (hppix == pix))
-				print(nondetection_and_in_depth_map)
-				alistcatalog['ferr_best_%s' % eachband][nondetection_and_in_depth_map] = \
-					3 * depth_map['ferr_ap_%s_mean' % eachband][np.where(depth_map['hp_idx_O_13'] == pix)]
-
-			"""# create healpix map of depth of given band
-			thisbanddepthmap = np.full(hp.order2npix(13), np.nan)
-			thisbanddepthmap[depth_map['hp_idx_O_13']] = depth_map['ferr_ap_%s_mean' % eachband]
-			# get only sources without a measurement in that band
-			nondetectionsidxs = np.where(np.isfinite(alistcatalog['ferr_best_%s' % eachband]))
-			# append local depth to uncertainty column of the catalog
-			alistcatalog['ferr_best_%s' % eachband][nondetectionsidxs] = thisbanddepthmap[hppix][nondetectionsidxs]"""
-
-		except:
-			try:
-				foo = depth_map['ferr_%s_mean' % eachband]
-
-				for pix in uniqpix:
-					nondetection_and_in_depth_map = np.where((np.isfinite(alistcatalog['ferr_best_%s' % eachband])) &
-					                                         (hppix == pix))
-					alistcatalog['ferr_best_%s' % eachband][nondetection_and_in_depth_map] = \
-						3 * depth_map['ferr_%s_mean' % eachband][np.where(depth_map['hp_idx_O_13'] == pix)]
-			except:
-				print('No %s band coverage in %s' % (eachband, helpfield))
-
-	return alistcatalog
 
 
 
@@ -708,11 +725,30 @@ def redshift_completeness(ids, help_tab):
 
 
 def rest_frame_seds(filternames, catalog):
-	zs = catalog['Z_best']
 	fullfilternames = ['f_best_%s' % filternames[k] if k < len(filternames) - 10 else 'f_%s' % filternames[k] for k in
 	                   range(len(filternames))]
 	fullerrnames = ['ferr_best_%s' % filternames[k] if k < len(filternames) - 10 else 'ferr_%s' % filternames[k]
-	                      for k in range(len(filternames))]
+	                for k in range(len(filternames))]
+	#highzcatalog = catalog[np.where(catalog['Z_best'] > 3)]
+	#plot_each_observed_sed(highzcatalog, filternames)
+	catalog = catalog[np.where(catalog['Z_best'] < 3)]
+
+	zero_nongauss = True
+	mask_bad_bright_sources = True
+	zs = catalog['Z_best']
+	if zero_nongauss:
+		catalog['f_spire_250'][np.where(catalog['250_nongauss'])] = 0
+		catalog['f_spire_350'][np.where(catalog['350_nongauss'])] = 0
+		catalog['f_spire_500'][np.where(catalog['500_nongauss'])] = 0
+	if mask_bad_bright_sources:
+		bad250idxs = np.where((np.logical_not(catalog['250_nongauss'])) & (catalog['flag_spire_250']))
+		catalog['f_spire_250'][bad250idxs] = np.nan
+		catalog['f_spire_350'][np.where((np.logical_not(catalog['350_nongauss'])) & (catalog['flag_spire_350']))] = \
+			np.nan
+		catalog['f_spire_500'][np.where((np.logical_not(catalog['500_nongauss'])) & (catalog['flag_spire_500']))] = \
+			np.nan
+
+
 	#cigale_names, cigale_err_names, fullfilters, fullerrfilters = convert_filternames(filternames, fkey='f_best_')
 	obs_wavelengths = peak_wavelengths_from_filters(filternames)
 	rest_wavelengths = np.outer(1 / (1 + zs), obs_wavelengths)
@@ -746,11 +782,14 @@ def normalize_seds(rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu, rest_lambda):
 	interp_lum_list = np.array(interp_lum_list)
 	median_lum = np.median(interp_lum_list)
 	lum_ratios = np.array(median_lum / interp_lum_list)
-	non_outliers = np.where(lum_ratios < 5 * np.std(lum_ratios))
+
+
+	"""non_outliers = np.where(lum_ratios < 5 * np.std(lum_ratios))
+	print(non_outliers)
 	lum_ratios = lum_ratios[non_outliers]
 	obs_nu_f_nu = obs_nu_f_nu[non_outliers]
 	obs_nu_ferr_nu = obs_nu_ferr_nu[non_outliers]
-	rest_wavelengths = rest_wavelengths[non_outliers]
+	rest_wavelengths = rest_wavelengths[non_outliers]"""
 
 	obs_nu_f_nu = np.transpose(np.transpose(obs_nu_f_nu) * lum_ratios)
 	obs_nu_ferr_nu = np.transpose(np.transpose(obs_nu_ferr_nu) * lum_ratios)
@@ -760,10 +799,13 @@ def normalize_seds(rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu, rest_lambda):
 
 	return rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu, median_lum, lum_ratios
 
-def construct_composite(rest_wavelengths, nu_f_nu, nu_f_nu_errs, rest_wavelength_bins, nondetection_sigma=3):
+def construct_composite(rest_wavelengths, nu_f_nu, nu_f_nu_errs, rest_wavelength_bins, nondetection_sigma=1):
+	import matplotlib.pyplot as plt
 	from source import survival
 	import importlib
 	importlib.reload(survival)
+
+	survival_analysis = False
 	# keep track of which rest wavelength bin each flux falls into for each object
 	wavelength_bin_idxs = []
 	for j in range(len(nu_f_nu)):
@@ -791,30 +833,60 @@ def construct_composite(rest_wavelengths, nu_f_nu, nu_f_nu_errs, rest_wavelength
 			binned_nu_f_nu.append(np.nan), binned_lower_errs.append(np.nan), binned_upper_errs.append(np.nan)
 
 		else:
+			if survival_analysis:
+
+				# separate non-detections
+				nondetected_flag = (nfnu_in_bin / nfnu_err_in_bin < nondetection_sigma)
+
+				print('Detection fraction is %s \n' % (len(np.where(nondetected_flag == False)[0]) / len(
+					nfnu_in_bin)))
+
+				plt.close('all')
+				plt.close('all')
+				plt.figure(figsize=(8,7))
+				nongausslums = nfnu_in_bin[np.where(nondetected_flag)]
+				gausslums = nfnu_in_bin[np.where(np.logical_not(nondetected_flag))]
+				nondetectedlums = nondetectedlums[np.where(nondetectedlums > 0)]
+				plt.hist(np.log10(nondetectedlums), color='k', histtype='step', label='Non-detections')
+				plt.hist(np.log10(detectedlums), color='g', histtype='step', label='Detections')
+				plt.xlabel(r'Normalized $\nu F_{\nu}$', fontsize=20)
+				plt.legend(fontsize=20)
+				plt.yscale('log')
+
+				plt.savefig('plots/seds/dists/%s.pdf' % rest_wavelength_bins[j])
+				plt.close('all')
 
 
-			# separate non-detections
-			nondetected_flag = (nfnu_in_bin / nfnu_err_in_bin < nondetection_sigma)
-			#print('Detection fraction is %s \n' % (len(np.where(nondetected_flag == False)[0]) / len(nfnu_in_bin)))
 
-			survival_median, lowerbound, upperbound = survival.km_median(nfnu_in_bin, nondetected_flag,
-			                                                          censorship='upper', return_errors=True)
-			if survival_median > 0:
-				binned_nu_f_nu.append(survival_median), binned_lower_errs.append(lowerbound)
-				binned_upper_errs.append(upperbound)
+				survival_median, lowerbound, upperbound = survival.km_median(nfnu_in_bin, nondetected_flag,
+				                                                          censorship='upper', return_errors=True)
+				if survival_median > 0:
+					binned_nu_f_nu.append(survival_median), binned_lower_errs.append(lowerbound)
+					binned_upper_errs.append(upperbound)
 
+				else:
+					upperlimit = 3*np.median(nfnu_err_in_bin)
+					binned_nu_f_nu.append(upperlimit)
+					binned_lower_errs.append(np.inf)
+					binned_upper_errs.append(0)
 			else:
-				upperlimit = 3*np.median(nfnu_err_in_bin)
-				binned_nu_f_nu.append(upperlimit)
-				binned_lower_errs.append(np.inf)
-				binned_upper_errs.append(0)
+				realizations = []
+				binned_nu_f_nu.append(np.nanmedian(nfnu_in_bin))
+				for k in range(50):
+					bootidxs = np.random.choice(len(nu_f_nu), len(nu_f_nu))
+					bootnufnu = nu_f_nu[bootidxs]
+					bootwavelength_bin_idxs = wavelength_bin_idxs[bootidxs]
+					bootnufnu_in_bin = bootnufnu[np.where(bootwavelength_bin_idxs == j)]
+					realizations.append(np.nanmedian(bootnufnu_in_bin))
+				err = np.std(realizations)
+				binned_lower_errs.append(err), binned_upper_errs.append(err)
 
 
 
 	return binned_nu_f_nu, binned_lower_errs, binned_upper_errs
 
 
-def measure_composites():
+def measure_composites(wavelength_bins):
 
 
 	mastercat = Table.read('../data/HELP/master_agn_catalog.fits')
@@ -822,13 +894,16 @@ def measure_composites():
 	nbins = np.int(np.max(mastercat['bin']))
 	binnedseds, lowerrs, uperrs = [], [], []
 
+	all_lum_ratios = []
 	constmedlum = 0
 	for j in range(nbins):
+		binlumratios = []
 		binnedcat = mastercat[np.where(mastercat['bin'] == j+1)]
 		restlam, obsnu, obsnuerr = rest_frame_seds(best_filterset, binnedcat)
 
 
 		restlam, obsf, obserr, medlum, lum_ratios = normalize_seds(restlam, obsnu, obsnuerr, 6.)
+
 		if j == 0:
 			constmedlum = medlum
 		else:
@@ -836,181 +911,23 @@ def measure_composites():
 			obsf *= norm_between_bins
 			obserr *= norm_between_bins
 			lum_ratios *= norm_between_bins
+		binlumratios.append(lum_ratios)
+		all_lum_ratios.append(binlumratios)
 
-		sed, loerr, hierr = construct_composite(restlam, obsf, obserr, np.logspace(-1.1, 2.75, 20))
+		sed, loerr, hierr = construct_composite(restlam, obsf, obserr, wavelength_bins)
 		binnedseds.append(sed), lowerrs.append(loerr), uperrs.append(hierr)
 
 	import plotting
-	plotting.plot_composite_sed(nbins, np.logspace(-1.1, 2.75, 20), binnedseds, lowerrs, uperrs)
+	plotting.plot_luminosity_distributions(constmedlum, all_lum_ratios)
+	plotting.plot_composite_sed(nbins, wavelength_bins, binnedseds, lowerrs, uperrs)
+
+
+
+custom_wavelengthbins = np.array(list(np.logspace(-1.1, 0.3, 30)) + \
+                        list(np.logspace(0.3, 1, 5))[1:] + \
+                        list(np.logspace(1.6, 2.5, 10)))
+
 
 
 #prepare_help_data(good_fields)
-measure_composites()
-
-
-def bin_sed(lambda_bins, rest_wavelength_matrix, nu_f_nu):
-	# for each source, this array contains an array of indices to sort flux into correct rest frame wwavelength bin
-	wavelength_bin_idxs = []
-	for j in range(len(nu_f_nu)):
-		wavelength_bin_idxs.append(np.digitize(rest_wavelength_matrix[j], lambda_bins))
-	wavelength_bin_idxs = np.array(wavelength_bin_idxs)
-
-	binned_nu_f_nu, binned_nu_f_nu_errs = [], []
-	for j in range(1, len(lambda_bins)):
-		realizations = []
-		nfnu_in_bin = nu_f_nu[np.where(wavelength_bin_idxs == j)]
-		binned_nu_f_nu.append(np.nanmedian(nfnu_in_bin))
-		for k in range(50):
-			bootidxs = np.random.choice(len(nu_f_nu), len(nu_f_nu))
-			bootnufnu = nu_f_nu[bootidxs]
-			bootwavelength_bin_idxs = wavelength_bin_idxs[bootidxs]
-			bootnufnu_in_bin = bootnufnu[np.where(bootwavelength_bin_idxs == j)]
-			realizations.append(np.nanmedian(bootnufnu_in_bin))
-		binned_nu_f_nu_errs.append(np.std(realizations))
-	binned_nu_f_nu, binned_nu_f_nu_errs = np.array(binned_nu_f_nu), np.array(binned_nu_f_nu_errs)
-	return binned_nu_f_nu, binned_nu_f_nu_errs
-
-
-
-
-
-def composite_sed(n_wavelength_bins, binnum, binnedtab, nbins, norm_micron):
-	import plotting
-
-	help_cat = Table.read('../data/HELP/bootes_catwisepm_r75.fits')
-	help_cat['zbest'] = help_cat['redshift']
-	help_cat['zbest'][np.where((help_cat['zspec'] > 0) & (help_cat['zspec'] < 10))] = \
-				help_cat['zspec'][np.where((help_cat['zspec'] > 0) & (help_cat['zspec'] < 10))]
-	fkey, ferr_key = 'f_', 'ferr_'
-	help_cat = help_cat[np.where(help_cat['ferr_ap_irac_i2'] > 0)]
-	help_cat = help_cat[np.where((help_cat['zbest'] > 0) & (help_cat['zbest'] < 3))]
-
-	help_coords = SkyCoord(help_cat['RA_wise'] * u.deg, help_cat['DEC_wise'] * u.deg)
-
-
-
-	binnedtab = binnedtab[np.where((binnedtab['RA'] < np.max(help_cat['ra_help']) + 0.5) &
-	                               (binnedtab['RA'] > np.min(help_cat['ra_help']) - 0.5) &
-	                               (binnedtab['DEC'] < np.max(help_cat['dec_help']) + 0.5) &
-	                               (binnedtab['DEC'] > np.min(help_cat['dec_help']) - 0.5))]
-
-	binnedcoords = SkyCoord(binnedtab['RA'] * u.deg, binnedtab['DEC'] * u.deg)
-
-	helpidx, d2d, d3d = binnedcoords.match_to_catalog_sky(help_coords)
-	help_cat = help_cat[helpidx]
-	help_cat = help_cat[d2d < 1*u.arcsec]
-	binnedtab = binnedtab[d2d < 1*u.arcsec]
-
-	rest_wavelength_bins = np.logspace(-1.1, 2.75, n_wavelength_bins)
-
-
-	zs = np.array(help_cat['zbest'])
-	filters = ['lbc_u', 'mosaic_b', '90prime_g', 'gpc1_g', 'gpc1_r', '90prime_r', 'mosaic_r', 'gpc1_i', 'mosaic_i',
-	           'gpc1_z', 'suprime_z', 'mosaic_z', '90prime_z', 'gpc1_y', 'lbc_y', 'ukidss_j', 'newfirm_j',
-	           'newfirm_h', 'tifkam_ks', 'newfirm_k', 'irac_i1', 'irac_i2', 'irac_i3', 'irac_i4', 'mips_24',
-	           'pacs_green', 'pacs_red', 'spire_250', 'spire_350', 'spire_500']
-	aperture_list = ['ap_' if k<len(filters) - 6 else '' for k in range(len(filters))]
-
-	cigale_filternames = ['LBC_U', 'MOSAIC_B', '90PRIME_B', 'PAN-STARRS_g', 'PAN-STARRS_r', '90PRIME_R', 'MOSAIC_R',
-	                      'PAN-STARRS_i', 'MOSAIC_I', 'PAN-STARRS_z', 'SUBARU_z', 'MOSAIC_z', '90PRIME_Z',
-	                      'PAN-STARRS_y', 'LBC_Y', 'UKIRT_WFCJ', 'NEWFIRM_J', 'NEWFIRM_H', 'TIFKAM_Ks', 'NEWFIRM_K',
-	                      'IRAC1', 'IRAC2', 'IRAC3', 'IRAC4', 'MIPS1', 'PACS_green', 'PACS_red', 'PSW', 'PMW', 'PLW']
-
-	fullfilters = [fkey + aperture_list[j] + filters[j] for j in range(len(filters))]
-	fullerrfilters = [ferr_key + aperture_list[j] + filters[j] for j in range(len(filters))]
-
-	fluxes = help_cat[fullfilters]
-	fluxerrs = help_cat[fullerrfilters]
-
-	newfluxes, newfluxerrs = [], []
-	for j in range(len(fluxes)):
-		newfluxes.append(np.array(list(fluxes[j])).astype(np.float64))
-		newfluxerrs.append(np.array(list(fluxerrs[j])).astype(np.float64))
-
-	fluxes, fluxerrs = np.array(newfluxes), np.array(newfluxerrs)
-
-	obs_wavelengths = np.array([0.365, 0.445, 0.464, 0.464, 0.617, 0.617, 0.617, 0.752, 0.752, 0.866, 0.866, 0.866,
-	                          0.866, 1.031, 1.031, 1.248, 1.248, 1.631, 2.201, 2.201, 3.6, 4.5, 5.8, 8.0, 24., 70.,
-	                            160., 250, 350., 500.])
-	#plotting.plot_each_sed(obs_wavelengths, fluxes[0], np.array(list(fluxerrs[0])))
-	#rest_wavelengths = []
-
-	#for j in range(zs):
-	#	rest_wavelengths.append(obs_wavelengths / (1 + zs[j]))
-
-	#rest_wavelengths = obs_wavelengths / (1 + zs)
-	# rest wavelength is observed wavelength / (1 + z)
-	rest_wavelengths = np.outer(1 / (1 + zs), obs_wavelengths)
-	# observed frequency is c / wavelength
-	obs_freqs = (con.c / (np.array(obs_wavelengths) * u.micron)).to('Hz').value
-
-	obs_nu_f_nu = obs_freqs * fluxes
-	obs_nu_ferr_nu = obs_freqs * fluxerrs
-	#rest_freqs = np.transpose(np.transpose(obs_freqs) * (1 + zs))
-	#rest_nu_f_nu = obs_nu_f_nu / (rest_freqs)
-
-
-	norm_lums = []
-	for j in range(len(obs_nu_f_nu)):
-		good_filters = np.where(np.isfinite(fluxes[j]))
-		norm_lums.append(interpolate_tools.log_interp1d(rest_wavelengths[j][good_filters],
-		            obs_nu_f_nu[j][good_filters])(norm_micron))
-	norm_lums = np.array(norm_lums)
-	median_lum = np.median(norm_lums)
-	lum_ratios = np.array(median_lum / norm_lums)
-	non_outliers = np.where(lum_ratios < 5 * np.std(lum_ratios))
-	lum_ratios = lum_ratios[non_outliers]
-	obs_nu_f_nu = obs_nu_f_nu[non_outliers]
-	obs_nu_ferr_nu = obs_nu_ferr_nu[non_outliers]
-	rest_wavelengths = rest_wavelengths[non_outliers]
-
-
-	obs_nu_f_nu = np.transpose(np.transpose(obs_nu_f_nu) * lum_ratios)
-
-
-	wavelength_bin_idxs = []
-	for j in range(len(obs_nu_f_nu)):
-		wavelength_bin_idxs.append(np.digitize(rest_wavelengths[j], rest_wavelength_bins))
-	wavelength_bin_idxs = np.array(wavelength_bin_idxs)
-
-	binned_nu_f_nu = []
-	for j in range(len(rest_wavelength_bins)):
-		nfnu_in_bin = obs_nu_f_nu[np.where(wavelength_bin_idxs == j)]
-		binned_nu_f_nu.append(np.nanmean(np.log10(nfnu_in_bin)))
-	binned_nu_f_nu = 10 ** np.array(binned_nu_f_nu)
-
-
-
-	plotting.plot_each_sed(binnum, nbins, rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu)
-
-	return rest_wavelength_bins, binned_nu_f_nu
-
-
-
-	#rest_nu_f_nu = rest_nu_f_nu * lum_ratios
-
-
-
-"""def all_composites(n_wavelength_bins, rest_wavelength_normalize):
-	import plotting
-	tab = Table.read('catalogs/derived/catwise_binned.fits')
-	nbins = int(np.max(tab['bin']))
-
-	binnedseds, normlums = [], []
-	for j in range(nbins):
-		binnedtab = tab[np.where(tab['bin'] == j + 1)]
-		rest_wavelength_bins, binnedsed = composite_sed(n_wavelength_bins, j+1, binnedtab, nbins,
-		                                                rest_wavelength_normalize)
-		normlums.append(interpolate_tools.log_interp1d(rest_wavelength_bins, binnedsed)(rest_wavelength_normalize))
-		binnedseds.append(binnedsed)
-	mednormlums = np.nanmedian(normlums)
-	lum_ratios = np.array(mednormlums / np.array(normlums))
-
-	binnedseds = np.transpose(np.transpose(np.array(binnedseds)) * lum_ratios)
-
-
-
-	plotting.plot_composite_sed(nbins, rest_wavelength_bins, np.array(binnedseds))"""
-
-
-#all_composites(20, 3)
+measure_composites(custom_wavelengthbins)

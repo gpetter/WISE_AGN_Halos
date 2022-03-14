@@ -47,14 +47,16 @@ def fit_lensing_of_bin(binnum, samplename, mode='bias'):
 		modcf = lensingModel.biased_binned_x_power_spectrum(None, b, midzs, dndz)
 	else:
 		mass, mass_err = lensingModel.fit_mass(power, power_err, midzs, dndz)
-		print(mass, mass_err)
-		b, b_err = bias_tools.mass_to_avg_bias(mass, midzs, dndz, merr=[mass_err, mass_err])
+		print(mass_err)
+
+		b, b_err = bias_tools.mass_to_avg_bias(mass, midzs, dndz, log_merr=[mass_err, mass_err])
+
 		np.array([b, b_err]).dump('results/lensing_xcorrs/bias/%s_%s.npy' % (samplename, binnum))
 		np.array([mass, mass_err]).dump('results/lensing_xcorrs/mass/%s_%s.npy' % (samplename, binnum))
 		modcf = lensingModel.mass_biased_x_power_spectrum(None, mass, midzs, dndz)
 	unbiased_cf = lensingModel.binned_x_power_spectrum(midzs, dndz)
 	plotting.plot_each_lensing_fit(binnum, int(np.max(tab['bin'])), scales, power, power_err, modcf, unbiased_cf)
-	return [b, b_err, mass, mass_err]
+	return [b, b_err, mass, mass_err, mass_err]
 
 
 def fit_lensing_by_bin(pool, samplename, mode='bias'):
@@ -66,14 +68,15 @@ def fit_lensing_by_bin(pool, samplename, mode='bias'):
 	medcolors = sample.get_median_colors(tab)
 	np.array([medcolors, np.array(bs)[:, 0], np.array(bs)[:, 1]]).dump('results/lensing_xcorrs/bias/%s.npy' %
 	                                                                   samplename)
-	np.array([medcolors, np.array(bs)[:, 2], np.array(bs)[:, 3]]).dump('results/lensing_xcorrs/mass/%s.npy' %
-	                                                                   samplename)
+	np.array([medcolors, np.array(bs)[:, 2], np.array(bs)[:, 3], np.array(bs)[:, 4]]).dump(
+				'results/lensing_xcorrs/mass/%s.npy' % samplename)
 
 	"""
 	if mode == 'bias':
 		plotting.bias_v_color(medcolors, np.array(bs)[:, 0], np.array(bs)[:, 1])
 		plotting.mass_v_color(medcolors, np.array(bs)[:, 2], np.array(bs)[:, 3] - np.array(bs)[:, 2],
 		                      np.array(bs)[:, 2] - np.array(bs)[:, 4])"""
+	plotting.bias_v_color(samplename)
 	plotting.mass_v_color(samplename)
 	pool.close()
 

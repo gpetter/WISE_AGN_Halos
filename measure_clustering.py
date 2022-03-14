@@ -156,7 +156,7 @@ if __name__ == "__main__":
 			pool.wait()
 			sys.exit(0)
 
-	clustering_by_bin(pool, 500, samplename, -2.5, -0.25, nbins=15, oversample=1)
+	clustering_by_bin(pool, 500, samplename, -2.75, -0.25, nbins=15, oversample=1)
 	plotting.plot_ang_autocorrs(samplename)
 	plotting.cf_err_comparison(samplename)
 

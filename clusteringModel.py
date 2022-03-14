@@ -74,48 +74,52 @@ def angular_corr_func(thetas, zs, dn_dz_1, dn_dz_2=None, hodparams=None, hodmode
 	thetas = (thetas*u.deg).to('radian').value
 
 	# if specifying the model from an HOD
-	if hodparams is not None:
+	if hodmodel is None:
+		hodmodel = 'dm'
 
-		#if hodmodel == '1param':
-		#	onespec, twospec = [], []
-		#	for j in range(len(zs)):
-		#		onespec.append(np.zeros(len(k_grid)))
-		#		twospec.append(cosmo.matterPowerSpectrum(k_grid.value, zs[j]))
-		#else:
-		onespec, twospec = hod_model.power_spectra_for_zs(zs, hodparams, modeltype=hodmodel)
-
-
-
-		if term == 'both':
-			powspec = np.array(onespec) + np.array(twospec)
-		elif term == 'one':
-			powspec = np.array(onespec)
-		else:
-			powspec = np.array(twospec)
-
-		# Hankel transform of P(k,z) gives theta*xi grid, and the result of the k integral of Dipompeo+17 Eq. 2
-		thetachis, dipomp_int = mcfit.Hankel(k_grid, lowring=True)(powspec, axis=1)
-
-		# 2D grid of thetas * chi(z) to interpolate model power spectra onto
-		input_theta_chis = np.outer(cosmo.comovingDistance(np.zeros(len(zs)), np.array(zs)), thetas)
+	#if hodmodel == '1param':
+	#	onespec, twospec = [], []
+	#	for j in range(len(zs)):
+	#		onespec.append(np.zeros(len(k_grid)))
+	#		twospec.append(cosmo.matterPowerSpectrum(k_grid.value, zs[j]))
+	#else:
+	onespec, twospec = hod_model.power_spectra_for_zs(zs, hodparams, modeltype=hodmodel)
 
 
 
-		# for each redshift, chi(z), interpolate the result of the above integral onto theta*chi(z) grid
-		interped_dipomp = []
-		for j in range(len(zs)):
-			interped_dipomp.append(interpolate_tools.log_interp1d(thetachis, dipomp_int[j])(input_theta_chis[j]))
 
-		interped_dipomp = np.array(interped_dipomp)
+	if term == 'both':
+		powspec = np.array(onespec) + np.array(twospec)
+	elif term == 'one':
+		powspec = np.array(onespec)
+	else:
+		powspec = np.array(twospec)
 
-		# convert H(z)/c from 1/Mpc to h/Mpc in order to cancel units of k
-		dz_d_chi = (apcosmo.H(zs) / const.c).to(u.littleh / u.Mpc, u.with_H0(apcosmo.H0)).value
-		# product of redshift distributions, and dz/dchi
-		differentials = dz_d_chi * dn_dz_1 * dn_dz_2
+	# Hankel transform of P(k,z) gives theta*xi grid, and the result of the k integral of Dipompeo+17 Eq. 2
+	thetachis, dipomp_int = mcfit.Hankel(k_grid, lowring=True)(powspec, axis=1)
 
-		z_int = 1 / (2 * np.pi) * np.trapz(differentials * np.transpose(interped_dipomp), x=zs, axis=1)
+	# 2D grid of thetas * chi(z) to interpolate model power spectra onto
+	input_theta_chis = np.outer(cosmo.comovingDistance(np.zeros(len(zs)), np.array(zs)), thetas)
 
-		return z_int
+
+
+	# for each redshift, chi(z), interpolate the result of the above integral onto theta*chi(z) grid
+	interped_dipomp = []
+	for j in range(len(zs)):
+		interped_dipomp.append(interpolate_tools.log_interp1d(thetachis, dipomp_int[j])(input_theta_chis[j]))
+
+	interped_dipomp = np.array(interped_dipomp)
+
+	# convert H(z)/c from 1/Mpc to h/Mpc in order to cancel units of k
+	dz_d_chi = (apcosmo.H(zs) / const.c).to(u.littleh / u.Mpc, u.with_H0(apcosmo.H0)).value
+	# product of redshift distributions, and dz/dchi
+	differentials = dz_d_chi * dn_dz_1 * dn_dz_2
+
+	z_int = 1 / (2 * np.pi) * np.trapz(differentials * np.transpose(interped_dipomp), x=zs, axis=1)
+
+
+
+	return z_int
 
 
 
@@ -146,17 +150,18 @@ def biased_ang_cf(thetas, b, zs, dn_dz_1, dn_dz_2=None):
 	                                            dn_dz_2=dn_dz_2)
 
 
-def mass_biased_ang_cf(thetas, m, zs, dn_dz_1, dn_dz_2=None):
-	b = bias_tools.mass_to_avg_bias(m, zs, dn_dz_1)
+def mass_biased_ang_cf(thetas, log_m, zs, dn_dz_1, dn_dz_2=None):
+	b = bias_tools.mass_to_avg_bias(10**log_m, zs, dn_dz_1)
 	return biased_ang_cf(thetas, b, zs, dn_dz_1, dn_dz_2)
 
 
 def fit_bias(theta_data, w_data, w_errs, zs, dn_dz, mode='bias'):
 	if mode == 'bias':
 		partialfun = partial(biased_ang_cf, zs=zs, dn_dz_1=dn_dz)
+		popt, pcov = curve_fit(partialfun, theta_data, w_data, sigma=w_errs, absolute_sigma=True)
 	else:
 		partialfun = partial(mass_biased_ang_cf, zs=zs, dn_dz_1=dn_dz)
-	popt, pcov = curve_fit(partialfun, theta_data, w_data, sigma=w_errs, absolute_sigma=True)
+		popt, pcov = curve_fit(partialfun, theta_data, w_data, sigma=w_errs, absolute_sigma=True, bounds=[11, 14])
 	return popt[0], np.sqrt(pcov)[0][0]
 
 # function taking 3 HOD parameters and returning angular CF. Used for initial least squares fit to give MCMC a good

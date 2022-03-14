@@ -124,7 +124,7 @@ def redshift_overlap(zs1, zs2, bin_avgs=True):
 
 def match_to_spec_surveys(samplename, seplimit):
 	# only match sources inside the cosmos footprint
-	cosmosonly = True
+	cosmosonly = False
 	tab = Table.read('catalogs/derived/%s_filtered.fits' % samplename)
 	if cosmosonly:
 		# first cut down catalog to rough area of COSMOS to reduce healpix processing time
@@ -134,14 +134,15 @@ def match_to_spec_surveys(samplename, seplimit):
 		# find sources inside the cosmos footprint
 		maskedtab = tab[np.where(cosmosmask[hp.ang2pix(hp.npix2nside(len(cosmosmask)), tab['RA'], tab['DEC'],
 		                                               lonlat=True)] > 0)]
-		# set up empty array for redshifts
-		maskedtab['Z'] = np.full(len(maskedtab), np.nan)
-		# flag for photometric redshifts
-		maskedtab['phot_flag'] = np.full(len(maskedtab), np.nan)
-		maskedtab['z_source'] = np.full(len(maskedtab), np.nan)
+
 
 	else:
 		maskedtab = tab
+	# set up empty array for redshifts
+	maskedtab['Z'] = np.full(len(maskedtab), np.nan)
+	# flag for photometric redshifts
+	maskedtab['phot_flag'] = np.full(len(maskedtab), np.nan)
+	maskedtab['z_source'] = np.full(len(maskedtab), np.nan)
 	tabcoord = SkyCoord(maskedtab['RA'] * u.deg, maskedtab['DEC'] * u.deg)
 
 
@@ -160,22 +161,21 @@ def match_to_spec_surveys(samplename, seplimit):
 		for file in files:
 			spectab = Table.read(file)
 
-			if cosmosonly:
-				spectab = spectab[np.where((spectab['Zphot'] > 0.001) & (spectab['Zphot'] < 9.8))]
+			spectab = spectab[np.where((spectab['Zphot'] > 0.001) & (spectab['Zphot'] < 9.8))]
 			speccoords = SkyCoord(spectab['RA'] * u.deg, spectab['DEC'] * u.deg)
 
 			if bestmatch:
 				idx, d2d, d3d = speccoords.match_to_catalog_sky(tabcoord)
 				constraint = d2d < seplimit
-				if cosmosonly:
-					maskedtab['Z'][idx[constraint]] = spectab['Zphot'][constraint]
-					# if copying photometric redshift, set flag
-					maskedtab['phot_flag'][idx[constraint]] = 1
-					# set integer key to the number corresponding to the redshift catalog
-					maskedtab['z_source'][idx[constraint]] = k
-					k += 1
-					# append name of corresponding redshift catalog
-					catlist.append(file)
+				maskedtab['Z'][idx[constraint]] = spectab['Zphot'][constraint]
+				# if copying photometric redshift, set flag
+				maskedtab['phot_flag'][idx[constraint]] = 1
+				# set integer key to the number corresponding to the redshift catalog
+				maskedtab['z_source'][idx[constraint]] = k
+				k += 1
+				# append name of corresponding redshift catalog
+				catlist.append(file)
+				idxs_w_redshifts += list(idx[constraint])
 
 
 
@@ -201,14 +201,15 @@ def match_to_spec_surveys(samplename, seplimit):
 			if bestmatch:
 				idx, d2d, d3d = speccoords.match_to_catalog_sky(tabcoord)
 				constraint = d2d < seplimit
-				if cosmosonly:
-					maskedtab['Z'][idx[constraint]] = spectab['Zspec'][constraint]
-					# if copying photometric redshift, set flag
-					maskedtab['phot_flag'][idx[constraint]] = 0
-					maskedtab['z_source'][idx[constraint]] = k
-					k += 1
 
-					catlist.append(file)
+				maskedtab['Z'][idx[constraint]] = spectab['Zspec'][constraint]
+				# if copying photometric redshift, set flag
+				maskedtab['phot_flag'][idx[constraint]] = 0
+				maskedtab['z_source'][idx[constraint]] = k
+				k += 1
+
+				catlist.append(file)
+				idxs_w_redshifts += list(idx[constraint])
 
 			else:
 				idx, specidx, d2d, d3d = speccoords.search_around_sky(tabcoord, seplimit)
@@ -222,6 +223,6 @@ def match_to_spec_surveys(samplename, seplimit):
 
 
 	tab['hasz'] = np.zeros(len(tab))
-	tab['hasz'][idxs_w_redshifts] = 1
+	tab['hasz'][np.where(np.isfinite(tab['Z']))] = 1
 	tab.write('catalogs/derived/%s_hasz.fits' % samplename, format='fits', overwrite=True)
 
