@@ -45,21 +45,18 @@ def write_ls_density_mask():
 	hp.write_map('masks/ls_density.fits', randdensity, overwrite=True)
 
 
-def density_map(ras, decs, nside):
-	randdensity = hp.read_map('masks/ls_density.fits')
+def density_map(ras, decs, nside, weights):
 	lons, lats = healpixhelper.equatorial_to_galactic(ras, decs)
-	data_density = healpixhelper.healpix_density_map(lons, lats, nside)
-	#density_ratio = data_density / randdensity * np.sum(randdensity) / np.sum(data_density)
-	#density_ratio[np.isinf(density_ratio)] = np.nan
-	density_ratio = np.array(data_density).astype(np.float32)
+	data_density = np.array(healpixhelper.healpix_density_map(lons, lats, nside, weights)).astype(np.float32)
+
 	mask = hp.read_map('masks/union.fits')
-	density_ratio[np.where(np.logical_not(mask))] = np.nan
+	data_density[np.where(np.logical_not(mask))] = np.nan
 
-	return density_ratio
+	return data_density
 
 
-def density_contrast_map(ras, decs, nside):
-	density = density_map(ras, decs, nside)
+def density_contrast_map(ras, decs, nside, weights):
+	density = density_map(ras, decs, nside, weights)
 
 	meandensity = np.nanmean(density)
 
@@ -78,7 +75,7 @@ def xcorr_of_bin(bootnum, dcmap, master=True):
 	if bootnum > 0:
 		lensmap = hp.read_map('lensing_maps/planck/noise/maps/%s.fits' % (bootnum - 1))
 	else:
-		lensmap = hp.read_map('lensing_maps/planck/smoothed_masked.fits')
+		lensmap = hp.read_map('lensing_maps/planck/unsmoothed_masked.fits')
 
 	if master:
 		lensfield = nmt.NmtField(mask, [lensmap])
@@ -107,10 +104,12 @@ def xcorr_by_bin(pool, nboots, samplename, minscale, maxscale, nbins=10, master=
 	nside = hp.npix2nside(len(hp.read_map('masks/union.fits')))
 
 	tab = Table.read('catalogs/derived/catwise_binned.fits')
+	nbins = int(np.max(tab['bin']))
+	del tab
 
-	for j in range(int(np.max(tab['bin']))):
-		binnedtab = tab[np.where(tab['bin'] == j + 1)]
-		dcmap = density_contrast_map(binnedtab['RA'], binnedtab['DEC'], nside=nside)
+	for j in range(nbins):
+		binnedtab = Table.read('catalogs/derived/catwise_binned_%s.fits' % (j+1))
+		dcmap = density_contrast_map(binnedtab['RA'], binnedtab['DEC'], nside=nside, weights=binnedtab['weight'])
 
 
 		part_func = partial(xcorr_of_bin, dcmap=dcmap, master=master)
@@ -134,7 +133,7 @@ def xcorr_by_bin(pool, nboots, samplename, minscale, maxscale, nbins=10, master=
 def visualize_xcorr():
 	planckmap = hp.read_map('lensing_maps/planck/smoothed_masked.fits')
 	tab = Table.read('catalogs/derived/catwise_binned.fits')
-	dcmap = density_contrast_map(tab['RA'], tab['DEC'], nside=hp.npix2nside(len(planckmap)))
+	dcmap = density_contrast_map(tab['RA'], tab['DEC'], nside=hp.npix2nside(len(planckmap)), weights=tab['weight'])
 	smoothdcmap = hp.smoothing(dcmap, fwhm=1*np.pi/180.)
 	smoothplanckmap = hp.smoothing(planckmap, fwhm=0.1 * np.pi/180.)
 
