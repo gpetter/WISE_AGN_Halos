@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import healpy as hp
 from astropy.coordinates import SkyCoord
@@ -8,19 +10,23 @@ import pandas as pd
 import plotting
 from source import coord_transforms
 import healpixhelper
+import matplotlib.pyplot as plt
 from scipy import interpolate
-importlib.reload(healpixhelper)
-importlib.reload(coord_transforms)
-importlib.reload(plotting)
+
+
 
 
 # examine whether
-def density_by_coord(catname, binnum, rand, coordframe, lonlat, nbins):
-	t = Table.read('catalogs/derived/%s_binned.fits' % catname)
-	t = t[np.where(t['bin'] == binnum)]
+def density_by_coord(datatab, randtab, coordframe, lonlat, ncoordbins, applyweights=True, quantilebins=None):
 
-	coords = SkyCoord(t['RA'] * u.deg, t['DEC'] * u.deg)
-	randcoords = SkyCoord(rand['RA'] * u.deg, rand['DEC'] * u.deg)
+	if not applyweights:
+		bootrandixs = np.random.choice(len(randtab), int(len(randtab) / 1.5), replace=False,
+		                               p=randtab['weight']/np.sum(randtab['weight']))
+		randtab = randtab[bootrandixs]
+
+
+	coords = SkyCoord(datatab['RA'] * u.deg, datatab['DEC'] * u.deg)
+	randcoords = SkyCoord(randtab['RA'] * u.deg, randtab['DEC'] * u.deg)
 	if coordframe == 'C':
 		lon, lat = coords.ra, coords.dec
 		randlon, randlat = randcoords.ra, randcoords.dec
@@ -33,7 +39,8 @@ def density_by_coord(catname, binnum, rand, coordframe, lonlat, nbins):
 	else:
 		return
 
-	norm = float(len(randcoords) ) / len(coords)
+
+	norm = float(len(randcoords)) / len(coords)
 
 	if lonlat == 'lon':
 		vals, randvals = lon.value, randlon.value
@@ -42,34 +49,222 @@ def density_by_coord(catname, binnum, rand, coordframe, lonlat, nbins):
 	else:
 		return
 
-	maxval, minval = np.max(randvals), np.min(randvals)
-	out, quantilebins = pd.qcut(randvals, nbins, retbins=True)
-	bincenters = (quantilebins[1:] + quantilebins[:-1])/2
-	quantilebins[0] += -0.001
-	quantilebins[-1] += 0.001
 
 
+	if applyweights:
+		maxval, minval = np.max(randvals), np.min(randvals)
+		out, quantilebins = pd.qcut(randvals, ncoordbins, retbins=True)
+
+		quantilebins[0] += -0.001
+		quantilebins[-1] += 0.001
+	else:
+		quantilebins = quantilebins
+
+	bincenters = (quantilebins[1:] + quantilebins[:-1]) / 2
 
 	idxs, randidx = np.digitize(vals, quantilebins), np.digitize(randvals, quantilebins)
 
+
+	idxs = idxs[np.where((idxs > 0) & (idxs <= len(bincenters)))]
+	randidx = randidx[np.where((randidx > 0) & (randidx <= len(bincenters)))]
+
 	datacounts, randcounts = np.bincount(idxs)[1:], np.bincount(randidx)[1:]
 
+
 	ratios = datacounts / randcounts * norm
+
 	# propogate Poisson uncertainties to ratios
 	errors = np.sqrt(np.square(norm / randcounts * np.sqrt(datacounts)) + np.square(norm * datacounts / np.square(
 		randcounts) * np.sqrt(randcounts)))
 
-	"""ratios = []
 
-	for j in range(1, nbins):
-		try:
-			ratios.append(len(np.where(idxs == j)[0]) / len(np.where(randidx == j)[0]) * norm)
+	if applyweights:
+		ratio_interpolator = interpolate.interp1d(bincenters, ratios, fill_value='extrapolate')
+		interped_ratios, interped_rand_ratios = ratio_interpolator(vals), ratio_interpolator(randvals)
+		datatab['weight'] *= 1. / interped_ratios
+		randtab['weight'] *= interped_rand_ratios
 
-		except:
-			ratios.append(np.nan)"""
 
-	plotting.density_vs_coord(binnum, ratios, errors, bincenters, coordframe, lonlat)
-	return bincenters, ratios
+	#plotting.density_vs_coord(binnum, ratios, errors, bincenters, coordframe, lonlat)
+	return quantilebins, bincenters, ratios, errors, datatab, randtab
+
+def density_by_depth(datatab, randtab, depthbins, applyweights=True):
+
+	if not applyweights:
+		bootrandixs = np.random.choice(len(randtab), int(len(randtab) / 2), replace=False,
+		                               p=randtab['weight']/np.sum(randtab['weight']))
+		randtab = randtab[bootrandixs]
+
+	# read in legacy survey depth map in healpix format
+	depth_map = hp.read_map('masks/ls_depth.fits')
+	nside = hp.npix2nside(len(depth_map))
+	# convert ra dec to l, b, to compare to depth map
+	lons, lats = healpixhelper.equatorial_to_galactic(datatab['RA'], datatab['DEC'])
+	randlons, randlats = healpixhelper.equatorial_to_galactic(randtab['RA'], randtab['DEC'])
+	# find indexes of depth map where AGN land
+	pix = hp.ang2pix(nside, lons, lats, lonlat=True)
+	randpix = hp.ang2pix(nside, randlons, randlats, lonlat=True)
+	# a depth value for each AGN
+	depthsforpix = depth_map[pix]
+	randdepthsforpix = depth_map[randpix]
+
+	depthbinidxs = np.digitize(depthsforpix, depthbins)
+	randdepthbinidxs = np.digitize(randdepthsforpix, depthbins)
+
+	norm = float(len(randtab)) / len(datatab)
+
+	ratios, errors = [], []
+
+	median_depthvals = []
+	for j in range(1, len(depthbins)):
+		# if considering the leftmost bin, accept anything to the left of the right edge of that bin
+		if j == 1:
+			inbinidxs = np.where(depthbinidxs <= j)
+			randinbinidxs = np.where(randdepthbinidxs <= j)
+			depthvalsinbin = depthsforpix[inbinidxs]
+			randdepthvalsinbin = randdepthsforpix[randinbinidxs]
+		# if considering the rightmost bin, accept anythign to the right of the left edge of that bin
+		elif j == len(depthbins) - 1:
+			inbinidxs = np.where(depthbinidxs >= j)
+			randinbinidxs = np.where(randdepthbinidxs >= j)
+			depthvalsinbin = depthsforpix[inbinidxs]
+			randdepthvalsinbin = randdepthsforpix[randinbinidxs]
+		else:
+			inbinidxs = np.where(depthbinidxs == j)
+			randinbinidxs = np.where(randdepthbinidxs == j)
+			depthvalsinbin = depthsforpix[inbinidxs]
+			randdepthvalsinbin = randdepthsforpix[randinbinidxs]
+
+		median_depthvals.append(np.median(randdepthvalsinbin))
+
+		ratio = norm * len(depthvalsinbin) / len(randdepthvalsinbin)
+		error = np.sqrt(np.square(norm / len(randdepthvalsinbin) * np.sqrt(len(depthvalsinbin))) +
+		                      np.square(norm * len(depthvalsinbin) / np.square(len(randdepthvalsinbin))
+		                                * np.sqrt(len(randdepthvalsinbin))))
+		if applyweights:
+			datatab['weight'][inbinidxs] *= 1. / ratio
+			randtab['weight'][randinbinidxs] *= ratio
+
+		ratios.append(ratio)
+		errors.append(error)
+
+
+	return median_depthvals, ratios, errors, datatab, randtab
+
+
+
+def correct_all_systematics(systnames):
+
+	binnedtab = Table.read('catalogs/derived/catwise_binned.fits')
+
+
+	nbins = int(np.max(binnedtab['bin']))
+
+
+
+	for j in range(nbins):
+		centers, corcenters, ratios, corratios, errs, corerrs = [], [], [], [], [], []
+		bintab = binnedtab[np.where(binnedtab['bin'] == j+1)]
+		randtab = Table.read('catalogs/derived/ls_randoms_1_filtered.fits')
+		if 'RA' in systnames:
+			print('Testing RA')
+			rabins, racenters, raratios, raerrs, bintab, randtab = density_by_coord(bintab, randtab, 'C', lonlat='lon',
+			                                                               ncoordbins=10)
+			foojoo, corracenters, corraratios, corraerrs, foo, foobar = density_by_coord(bintab, randtab, 'C',
+			                                                                             lonlat='lon',
+			                                                                             ncoordbins=10,
+			                                                                             applyweights=False,
+			                                                                             quantilebins=rabins)
+			centers.append(racenters), corcenters.append(corracenters), ratios.append(raratios), corratios.append(
+				corraratios), errs.append(raerrs), corerrs.append(corraerrs)
+		if 'DEC' in systnames:
+			print('DEC')
+			decbins, deccenters, decratios, decerrs, bintab, randtab = density_by_coord(bintab, randtab, 'C',
+			                                                            lonlat='lat', ncoordbins=10)
+			foojoo, cordeccenters, cordecratios, cordecerrs, foo, foobar = density_by_coord(bintab, randtab, 'C',
+			                                                                                lonlat='lat',
+			                                                                                ncoordbins=10,
+			                                                                                applyweights=False,
+			                                                                                quantilebins=decbins)
+			centers.append(deccenters), corcenters.append(cordeccenters), ratios.append(decratios), corratios.append(
+				cordecratios), errs.append(decerrs), corerrs.append(cordecerrs)
+		if 'Ecliptic Longitude' in systnames:
+			print('Eclip. lon.')
+			elonbins, eloncenters, elonratios, elonerrs, bintab, randtab = density_by_coord(bintab, randtab, 'E',
+			                                                                              lonlat='lon',
+			                                                                   ncoordbins=10)
+			foojoo, coreloncenters, corelonratios, corelonerrs, foo, foobar = density_by_coord(bintab, randtab, 'E',
+			                                                                                   lonlat='lon',
+			                                                                                   ncoordbins=10,
+			                                                                                   applyweights=False,
+			                                                                                   quantilebins=elonbins)
+			centers.append(eloncenters), corcenters.append(coreloncenters), ratios.append(elonratios), corratios.append(
+				corelonratios), errs.append(elonerrs), corerrs.append(corelonerrs)
+		if 'Ecliptic Latitude' in systnames:
+			print('Eclip. lat.')
+			elatbins, elatcenters, elatratios, elaterrs, bintab, randtab = density_by_coord(bintab, randtab, 'E',
+			                                                                              lonlat='lat',
+			                                                                   ncoordbins=10)
+			foojoo, corelatcenters, corelatratios, corelaterrs, foo, foobar = density_by_coord(bintab, randtab, 'E',
+			                                                                                   lonlat='lat',
+			                                                                                   ncoordbins=10,
+			                                                                                   applyweights=False,
+			                                                                                   quantilebins=elatbins)
+			centers.append(elatcenters), corcenters.append(corelatcenters), ratios.append(elatratios), corratios.append(
+				corelatratios), errs.append(elaterrs), corerrs.append(corelaterrs)
+		if 'Galactic Longitude' in systnames:
+			print('Galactic lon.')
+			glonbins, gloncenters, glonratios, glonerrs, bintab, randtab = density_by_coord(bintab, randtab, 'G',
+			                                                                              lonlat='lon',
+			                                                                   ncoordbins=10)
+			foojoo, corgloncenters, corglonratios, corglonerrs, foo, foobar = density_by_coord(bintab, randtab, 'G',
+			                                                                                   lonlat='lon',
+			                                                                                   ncoordbins=10,
+			                                                                                   applyweights=False,
+			                                                                                   quantilebins=glonbins)
+			centers.append(gloncenters), corcenters.append(corgloncenters), ratios.append(glonratios), corratios.append(
+				corglonratios), errs.append(glonerrs), corerrs.append(corglonerrs)
+		if 'Galactic Latitude' in systnames:
+			print('Galactic lat.')
+			glatbins, glatcenters, glatratios, glaterrs, bintab, randtab = density_by_coord(bintab, randtab, 'G',
+			                                                                              lonlat='lat',
+			                                                                   ncoordbins=10)
+			foojoo, corglatcenters, corglatratios, corglaterrs, foo, foobar = density_by_coord(bintab, randtab, 'G',
+			                                                                                   lonlat='lat',
+			                                                                                   ncoordbins=10,
+			                                                                                   applyweights=False,
+			                                                                                   quantilebins=glatbins)
+			centers.append(glatcenters), corcenters.append(corglatcenters), ratios.append(glatratios), corratios.append(
+				corglatratios), errs.append(glaterrs), corerrs.append(corglaterrs)
+		print('r-band depth')
+		rdepthcenters, rdepthratios, rdeptherrs, bintab, randtab = density_by_depth(bintab, randtab, [150, 1500,
+		                                                                                               20000])
+		centers.append(np.log10(rdepthcenters)), ratios.append(rdepthratios), errs.append(rdeptherrs)
+
+		corrdepthcenters, corrdepthratios, corrdeptherrs, foo, foobar = density_by_depth(bintab, randtab,
+		                                                                            [150, 1500, 20000],
+		                                                                            applyweights=False)
+		corcenters.append(np.log10(corrdepthcenters)), corratios.append(corrdepthratios), corerrs.append(corrdeptherrs)
+
+		bintab.write('catalogs/derived/catwise_binned_%s.fits' % (j+1), format='fits', overwrite=True)
+
+		bootrandixs = np.random.choice(len(randtab), int(len(bintab) * 20), replace=False,
+		                               p=randtab['weight'] / np.sum(randtab['weight']))
+		randtab = randtab[bootrandixs]
+		randtab.write('catalogs/derived/catwise_randoms_%s.fits' % (j+1), format='fits', overwrite=True)
+
+
+
+
+		plotting.all_clustering_systematics(nbins, j+1, centers, corcenters, ratios, corratios, errs, corerrs,
+		                                    systnames)
+
+
+
+
+
+
+
 
 def smoothed_density(catname, nside):
 	cat = Table.read('catalogs/derived/%s_binned.fits' % catname)
@@ -97,18 +292,7 @@ def correct_randoms():
 	tab = Table.read('catalogs/derived/catwise_binned.fits')
 	randtab = Table.read('catalogs/derived/ls_randoms_1_filtered.fits')
 	nbins = int(np.max(tab['bin']))
-	# read in legacy survey depth map in healpix format
-	depth_map = hp.read_map('masks/ls_depth.fits')
-	nside = hp.npix2nside(len(depth_map))
-	# convert ra dec to l, b, to compare to depth map
-	lons, lats = healpixhelper.equatorial_to_galactic(tab['RA'], tab['DEC'])
-	randlons, randlats = healpixhelper.equatorial_to_galactic(randtab['RA'], randtab['DEC'])
-	# find indexes of depth map where AGN land
-	pix = hp.ang2pix(nside, lons, lats, lonlat=True)
-	randpix = hp.ang2pix(nside, randlons, randlats, lonlat=True)
-	# a depth value for each AGN
-	depthsforpix = depth_map[pix]
-	randdepthsforpix = depth_map[randpix]
+
 
 	# split sample up into two bins of imaging depth
 
