@@ -19,6 +19,8 @@ plt.style.use('science')
 def return_colorscheme(nbins):
 	colors = ['royalblue', 'darkgreen', 'firebrick']
 	if nbins <= 3:
+		if nbins == 2:
+			return ['royalblue', 'firebrick']
 		return colors[:nbins]
 	else:
 		return cm.rainbow(np.linspace(0, 1, nbins))
@@ -526,12 +528,17 @@ def data_vs_random_density(ratiomap, binno):
 	plt.close('all')
 
 def low_z_cut_plot(colorname, unresolved_xcolors, unresolved_ycolors, resolved_xcolors, resolved_ycolors, m1, b1, m2,
-                   b2):
+                   b2, highzcut):
 
 	intersection_x = (b2 - b1) / (m1 - m2)
 
 	plt.close('all')
 	fig = plt.figure(figsize=(8, 7))
+
+	if highzcut:
+		xintersect1 = (4.5 - b1) / m1
+	else:
+		xintersect1 = -10
 
 	# remove nans
 	goodunixs = (np.isfinite(unresolved_xcolors) & np.isfinite(unresolved_ycolors))
@@ -542,8 +549,11 @@ def low_z_cut_plot(colorname, unresolved_xcolors, unresolved_ycolors, resolved_x
 	ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
 	ax.scatter_density(unresolved_xcolors, unresolved_ycolors, color='k', alpha=1)
 	ax.scatter_density(resolved_xcolors, resolved_ycolors, color='b', alpha=1)
-	ax.plot(np.linspace(-10, intersection_x, 3), m1*np.linspace(-10, intersection_x, 3) + b1, c='k', ls='--')
+	ax.plot(np.linspace(xintersect1, intersection_x, 3),
+	        m1*np.linspace(xintersect1, intersection_x, 3) + b1, c='k', ls='--')
 	ax.plot(np.linspace(intersection_x, 10, 3), m2 * np.linspace(intersection_x, 10, 3) + b2, c='k', ls='--')
+	if highzcut:
+		ax.hlines(4.5, color='k', ls='--', xmin=-10, xmax=xintersect1)
 
 	ax.set_xlabel('%s - W2' % colorname, fontsize=20)
 	ax.set_ylabel('z - W2', fontsize=20)
@@ -578,13 +588,14 @@ def density_vs_coord(binnum, ratios, errors, bincenters, coordframe, lonlat):
 	plt.savefig('plots/density_vs_coord/%s_%s_%s.pdf' % (coordframe, lonlat, binnum))
 	plt.close('all')
 
-def mateos_plot(binnedtab, longband):
+def mateos_plot(nbins, binnedtab, longband):
 	nondetcat = binnedtab[np.where(np.isnan(binnedtab['e_W%smag' % longband]))]
 	# stack w3 nondetections with LS forced photometry
 	stacked_w3mag = -2.5 * np.log10(np.nanmean(nondetcat['flux_W%s' % longband]))
 	avg_nondet_w2 = np.mean(nondetcat['W2mag'])
 	stacked_w2w3 = avg_nondet_w2 - stacked_w3mag
 	avg_nondet_w1w2 = np.mean(nondetcat['W1mag'] - nondetcat['W2mag'])
+	colors = return_colorscheme(nbins)
 
 	binnedtab = binnedtab[np.where(np.logical_not(np.isnan(binnedtab['e_W%smag' % longband])))]
 	binnum = int(binnedtab['bin'][0])
@@ -595,7 +606,7 @@ def mateos_plot(binnedtab, longband):
 	ax.set_ylabel('W1 - W2 [Vega mags]', fontsize=20)
 
 	ax.scatter_density(binnedtab['W2mag'] - binnedtab['W%smag' % longband], binnedtab['W1mag'] - binnedtab['W2mag'],
-	                   color=return_colorscheme(5)[binnum-1])
+	                   color=colors[binnum-1])
 	if longband == '3':
 		ax.scatter_density(nondetcat['W2mag'] - 10, nondetcat['W1mag'] - nondetcat['W2mag'],
 		                   color='k', alpha=0.5)
@@ -605,7 +616,7 @@ def mateos_plot(binnedtab, longband):
 	ax.scatter_density(all_sources['w2mpro'] - all_sources['W%smag' % longband], all_sources['w1mpro'] - all_sources[
 		'w2mpro'],
 	                   color='k')
-	ax.scatter(stacked_w2w3, avg_nondet_w1w2, c=return_colorscheme(5)[binnum-1], label='Stacked W%s Non-detections' %
+	ax.scatter(stacked_w2w3, avg_nondet_w1w2, c=colors[binnum-1], label='Stacked W%s Non-detections' %
 	                                                                                   longband)
 
 	if longband == '3':
@@ -636,15 +647,16 @@ def radio_detection_fraction(colors, fracs, survey):
 
 
 
-def donley_plot(matchedtab, fulltab, binnum):
+def donley_plot(nbins, matchedtab, fulltab, binnum):
 	plt.close('all')
 	fig = plt.figure(figsize=(8, 7))
 	ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
 	ax.set_xlabel('[3.6] - [5.8]$_{AB}$', fontsize=20)
 	ax.set_ylabel('[4.5] - [8.0]$_{AB}$', fontsize=20)
+	colors = return_colorscheme(nbins)
 
 	ax.scatter(matchedtab['ch1_4'] + 2.79 - matchedtab['ch3_4'] - 3.73, matchedtab['ch2_4'] + 3.26 -
-	           matchedtab['ch4_4'] - 4.40, color=return_colorscheme(5)[binnum - 1])
+	           matchedtab['ch4_4'] - 4.40, color=colors[binnum - 1])
 	ax.scatter_density(fulltab['ch1_4'] + 2.79 - fulltab['ch3_4'] - 3.73,
 	                   fulltab['ch2_4'] + 3.26 - fulltab['ch4_4'] - 4.40, color='k', alpha=1, dpi=10)
 
@@ -667,16 +679,51 @@ def donley_plot(matchedtab, fulltab, binnum):
 	plt.savefig('plots/donley/%s.pdf' % binnum)
 	plt.close('all')
 
+def all_clustering_systematics(nbins, agnbin, bincenters, corbincenters, ratios, corratios, errors, corerrs, systnames):
+	separate_panels = True
+	if separate_panels:
+		fig, axs = plt.subplots(nrows=len(bincenters), ncols=1, sharex=False, figsize=(8, 6 * len(bincenters)))
+	else:
+		plt.figure(figsize=(8, 7))
 
-def stern05_plot(matchedtab, fulltab, binnum):
+	colors = return_colorscheme(nbins)
+
+
+	for j in range(len(bincenters)):
+		if separate_panels:
+			if len(bincenters) > 1:
+				thisax = axs[j]
+			else:
+				thisax = axs
+			thisax.scatter(bincenters[j], ratios[j], c='k')
+			thisax.errorbar(bincenters[j], ratios[j], yerr=errors[j], ecolor='k', fmt='none')
+			thisax.scatter(corbincenters[j], corratios[j], marker='s', edgecolors=colors[agnbin-1],
+			               facecolors='none')
+			thisax.errorbar(corbincenters[j], corratios[j], yerr=corerrs[j], ecolor=colors[agnbin-1], fmt='none')
+			thisax.set_xlabel(systnames[j], fontsize=20)
+
+			thisax.axhline(1, ls='--', c='k')
+
+		else:
+			print('fix me')
+
+	#plt.legend(fontsize=15)
+	plt.ylabel('$N_{\mathrm{data}} / N_{\mathrm{random}}$', fontsize=25)
+
+	plt.savefig('plots/systematics/all_%s.pdf' % agnbin)
+	plt.close('all')
+
+
+def stern05_plot(nbins, matchedtab, fulltab, binnum):
 	plt.close('all')
 	fig = plt.figure(figsize=(8, 7))
 	ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
 	ax.set_xlabel('[5.8] - [8.0]$_{Vega}$', fontsize=20)
 	ax.set_ylabel('[3.6] - [4.5]$_{Vega}$', fontsize=20)
+	colors = return_colorscheme(nbins)
 
 	ax.scatter(matchedtab['ch3_4'] - matchedtab['ch4_4'] , matchedtab['ch1_4'] -
-	           matchedtab['ch2_4'], color=return_colorscheme(5)[binnum - 1])
+	           matchedtab['ch2_4'], color=colors[binnum - 1])
 	ax.scatter_density(fulltab['ch3_4'] - fulltab['ch4_4'],
 	                   fulltab['ch1_4'] - fulltab['ch2_4'], color='k', alpha=1, dpi=10)
 	ax.vlines(0.6, ymin=0.3, ymax=3, colors='k', ls='--')
@@ -689,17 +736,18 @@ def stern05_plot(matchedtab, fulltab, binnum):
 	plt.savefig('plots/stern/%s.pdf' % binnum)
 	plt.close('all')
 
-def plot_kim_diagrams(binnum, ki2, i24, i2mips):
+def plot_kim_diagrams(nbins, binnum, ki2, i24, i2mips):
 	plt.close('all')
 	fig = plt.figure(figsize=(8, 7))
 	ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
 	ax.set_xlabel('[4.5] - [8.0]$_{AB}$', fontsize=20)
 	ax.set_ylabel('K - [4.5]$_{AB}$', fontsize=20)
+	colors = return_colorscheme(nbins)
 
 	detections = np.where((ki2 > -10) & (i24 > -10))
 
 
-	ax.scatter(i24[detections], ki2[detections], color=return_colorscheme(5)[binnum - 1])
+	ax.scatter(i24[detections], ki2[detections], color=colors[binnum - 1])
 	#ax.scatter_density(fulltab['ch3_4'] - fulltab['ch4_4'],
 	#                   fulltab['ch1_4'] - fulltab['ch2_4'], color='k', alpha=1, dpi=10)
 	ax.vlines(0, ymin=0, ymax=10, colors='k', ls='--', label='Messias+12')
@@ -719,7 +767,7 @@ def plot_kim_diagrams(binnum, ki2, i24, i2mips):
 	ax.set_ylabel('[4.5] - [24]$_{AB}$', fontsize=20)
 	detections = np.where((i2mips > -10) & (i24 > -10))
 
-	ax.scatter(i24[detections], i2mips[detections], color=return_colorscheme(5)[binnum - 1])
+	ax.scatter(i24[detections], i2mips[detections], color=colors[binnum - 1])
 	#ax.scatter_density(fulltab['ch3_4'] - fulltab['ch4_4'],
 	#                   fulltab['ch1_4'] - fulltab['ch2_4'], color='k', alpha=1, dpi=10)
 	ax.hlines(0.5, xmin=0.793, xmax=10, colors='k', ls='--', label='Messias+12')
@@ -734,6 +782,51 @@ def plot_kim_diagrams(binnum, ki2, i24, i2mips):
 
 
 	plt.savefig('plots/messias/im_%s.pdf' % binnum)
+	plt.close('all')
+
+def plot_stacks(return_ax=False):
+	bluestack = np.load('lens_stacks/catwise_stack0.npy', allow_pickle=True)*1000
+	redstack = np.load('lens_stacks/catwise_stack1.npy', allow_pickle=True)*1000
+	bluestd, redstd = np.std(bluestack), np.std(redstack)
+	cmap = 'inferno'
+
+	minval = np.min(np.array([bluestack.flatten(), redstack.flatten()]))
+	maxval = np.max(np.array([bluestack.flatten(), redstack.flatten()]))
+
+	halfwidth = 50
+
+	fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 7), dpi=300)
+	im = ax1.imshow(bluestack, vmin=minval, vmax=maxval, cmap=cmap, extent=[-halfwidth, halfwidth, -halfwidth,
+	                                                                       halfwidth])
+	ax1.get_xaxis().set_visible(False)
+	ax1.set_ylabel(r'$\theta$ (arcminutes)', fontsize=20)
+
+	ax1.tick_params(which='both', right=False, labelsize=15)
+
+	ax1.tick_params('both', which='major', length=8)
+	ax1.tick_params('both', which='minor', length=3)
+
+
+	ax1.text(-halfwidth/1.5, halfwidth*1.1, 'Unobscured', c='royalblue', fontsize=20)
+
+
+	ax2.imshow(redstack, vmin=minval, vmax=maxval, cmap=cmap, extent=[-halfwidth, halfwidth, -halfwidth, halfwidth])
+
+	#ax3.axis('off')
+	ax2.tick_params(which='both', length=0, labelbottom=False, labelleft=False)
+
+	ax2.text(-halfwidth/1.3, halfwidth*1.1, 'Obscured', c='firebrick', fontsize=20)
+
+	fig.subplots_adjust(bottom=0.1)
+	cbar_ax = fig.add_axes([0.2, 0.16, 0.6, 0.06])
+	cbar = fig.colorbar(im, cax=cbar_ax, orientation='horizontal')
+	cbar.set_label('$10^{3} \ \kappa$', fontsize=20)
+	cbar_ax.tick_params(labelsize=15)
+	#fig.colorbar(im)
+	plt.subplots_adjust(wspace=0.03)
+	if return_ax:
+		return plt.gca()
+	plt.savefig('plots/lens_stacks.pdf', bbox_inches='tight')
 	plt.close('all')
 
 
