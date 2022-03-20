@@ -22,13 +22,13 @@ def galactic_to_equatorial(l, b):
 	return ras, decs
 
 # for a given source list with ras and decs, create a healpix map of source density for a given pixel size
-def healpix_density_map(ras, decs, nsides):
+def healpix_density_map(ras, decs, nsides, weights=None):
 	# convert coordinates to healpix pixels
 	pix_of_sources = hp.ang2pix(nsides, ras, decs, lonlat=True)
 	# number of pixels for healpix map with nsides
 	npix = hp.nside2npix(nsides)
 	# count number of sources in each pixel
-	density_map = np.bincount(pix_of_sources, minlength=npix)
+	density_map = np.bincount(pix_of_sources, minlength=npix, weights=weights)
 
 	return density_map
 
