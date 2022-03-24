@@ -21,7 +21,7 @@ def ls_depth_mask(nside, galactic=False):
 
 	# read first random catalog
 	tab = Table.read('catalogs/randoms/ls_randoms/ls_randoms_1.fits')
-	tab = tab['RA', 'DEC', 'PSFDEPTH_R', 'EBV', 'WISEMASK_W1', 'WISEMASK_W2', 'MASKBITS']
+	tab = tab['RA', 'DEC', 'PSFDEPTH_R', 'EBV', 'MASKBITS']
 
 
 	if galactic:
