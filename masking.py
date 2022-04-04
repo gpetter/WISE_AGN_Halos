@@ -21,7 +21,7 @@ def ls_depth_mask(nside, galactic=False):
 
 	# read first random catalog
 	tab = Table.read('catalogs/randoms/ls_randoms/ls_randoms_1.fits')
-	tab = tab['RA', 'DEC', 'PSFDEPTH_R', 'EBV', 'MASKBITS']
+	tab = tab['RA', 'DEC', 'PSFDEPTH_R', 'PSFDEPTH_Z', 'EBV']
 
 
 	if galactic:
@@ -32,46 +32,40 @@ def ls_depth_mask(nside, galactic=False):
 	# calculate average depth field from randoms
 	avg_depth = healpixhelper.healpix_average_in_pixels(lons, lats, nside, tab['PSFDEPTH_R'])
 	lons_zero_depth, lats_zero_depth = list(lons[np.where(tab['PSFDEPTH_R'] == 0)]), \
-	                                   list(lats[np.where(tab['PSFDEPTH_R'] ==0)])
+	                                   list(lats[np.where(tab['PSFDEPTH_R'] == 0)])
 	# and average E(B-V) values
 	ebvs = healpixhelper.healpix_average_in_pixels(lons, lats, nside, tab['EBV'])
 	hp.write_map('masks/ls_depth.fits', avg_depth, overwrite=True)
 	hp.write_map('masks/ebv.fits', ebvs, overwrite=True)
 
-	w1mask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['WISEMASK_W1'])
-	w2mask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['WISEMASK_W2'])
-	lsmask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['MASKBITS'])
+	#lsmask = healpixhelper.healpix_average_in_pixels(lons, lats, 1024, tab['MASKBITS'])
 	del tab
 
 
 	# loop through many random catalogs, keep running total of pixels with masked randoms inside
 	# need to use many millions of randoms to properly sample bad pixels
-	for j in range(2, 5):
+	"""for j in range(2, 5):
 		newtab = Table.read('catalogs/randoms/ls_randoms/ls_randoms_%s.fits' % j)
-		newtab = newtab['RA', 'DEC', 'PSFDEPTH_R', 'EBV', 'WISEMASK_W1', 'WISEMASK_W2', 'MASKBITS']
+		newtab = newtab['RA', 'DEC', 'PSFDEPTH_R']
 
 		if galactic:
 			lons, lats = healpixhelper.equatorial_to_galactic(newtab['RA'], newtab['DEC'])
 		else:
 			lons, lats = newtab['RA'], newtab['DEC']
 
-		w1mask += healpixhelper.healpix_average_in_pixels(lons, lats, 1024, newtab['WISEMASK_W1'])
-		w2mask += healpixhelper.healpix_average_in_pixels(lons, lats, 1024, newtab['WISEMASK_W2'])
-		lsmask += healpixhelper.healpix_average_in_pixels(lons, lats, 1024, newtab['MASKBITS'])
+		#lsmask += healpixhelper.healpix_average_in_pixels(lons, lats, 1024, newtab['MASKBITS'])
 		lons_zero_depth += list(lons[np.where(newtab['PSFDEPTH_R'] == 0)])
 		lats_zero_depth += list(lats[np.where(newtab['PSFDEPTH_R'] == 0)])
 
-		#tab = vstack((tab, newtab))
 
 	zero_depth_map = healpixhelper.healpix_density_map(lons_zero_depth, lats_zero_depth, 1024)
 
-	wisemask = hp.ud_grade(w1mask + w2mask, nside)
 	lsmask = hp.ud_grade(lsmask, nside)
+	
 
 
-	hp.write_map('masks/zerodepth_mask.fits', zero_depth_map, overwrite=True)
-	hp.write_map('masks/wisemask.fits', wisemask, overwrite=True)
-	hp.write_map('masks/ls_badmask.fits', lsmask, overwrite=True)
+	#hp.write_map('masks/zerodepth_mask.fits', zero_depth_map, overwrite=True)
+	#hp.write_map('masks/ls_badmask.fits', lsmask, overwrite=True)"""
 
 
 # deprecated: masking obviously bad regions chosen by hand
@@ -140,9 +134,10 @@ def assef_mask(nside):
 	mask[np.where((np.abs(hpxlats) < 10) | (center_dists.value < 30))] = 0
 
 
-	passesallmasks = (mask * mask_near_sources(nside, 'pne') * mask_near_sources(nside, 'xsc') * mask_near_sources(
+	"""passesallmasks = (mask * mask_near_sources(nside, 'pne') * mask_near_sources(nside, 'xsc') * mask_near_sources(
 		nside, 'HII') * mask_near_sources(nside, 'lvg') * mask_near_sources(nside, 'LDN') * \
-	                 mask_near_sources(nside, 'LBN')).astype(np.bool)
+	                 mask_near_sources(nside, 'LBN')).astype(np.bool)"""
+	passesallmasks = (mask_near_sources(nside, 'LDN') * mask_near_sources(nside, 'LBN')).astype(np.bool)
 
 
 	hp.write_map('masks/assef.fits', passesallmasks, overwrite=True)
@@ -200,6 +195,7 @@ def total_mask(depth_cut, assef, unwise, planck, bright, ebv, ls_mask, zero_dept
 		mask = mask * newmask
 
 	if unwise:
+		print('masking unwise')
 		wisemask = hp.read_map('masks/wisemask.fits')
 		wisemask[np.where(np.logical_not(np.isfinite(wisemask)))] = 0
 		newmask = (wisemask < 1).astype(np.int)
