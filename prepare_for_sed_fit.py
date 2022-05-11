@@ -11,8 +11,15 @@ from astropy.io import fits
 from mocpy import MOC
 
 
+from colossus.cosmology import cosmology
+
+cosmo = cosmology.setCosmology('planck18')
+apcosmo = cosmo.toAstropy()
+
+
 from source import interpolate_tools
 
+# names of filter names in the HELP catalog and corresponding filter names in CIGALE
 help_to_cigale_filters = {'Hx': 'xray_boxcar_2to7keV',
                     'Fx': 'xray_boxcar_0p5to7keV', 'Sx': 'xray_boxcar_0p5to2keV',
                     'FUV': 'FUV', 'NUV': 'NUV',
@@ -39,6 +46,7 @@ help_to_cigale_filters = {'Hx': 'xray_boxcar_2to7keV',
 	                'spire_250': 'PSW', 'spire_350': 'PMW',
 	                'spire_500': 'PLW'}
 
+# set of bands to use in Bootes field
 bootes_filterset = ['FUV', 'NUV',
                         'lbc_u', 'mosaic_b', '90prime_g',
                         'gpc1_g', 'gpc1_r', '90prime_r',
@@ -51,10 +59,16 @@ bootes_filterset = ['FUV', 'NUV',
 	                    'mips_24', 'pacs_green', 'pacs_red',
 	                    'spire_250', 'spire_350', 'spire_500']
 
+# set of bands in the "best" version of the HELP catalog
 best_filterset = ['u', 'g', 'r', 'i', 'z', 'y', 'j', 'h', 'k', 'ks', 'irac_i1', 'irac_i2', 'irac_i3', 'irac_i4',
                   'mips_24', 'pacs_green', 'pacs_red', 'spire_250', 'spire_350', 'spire_500']
 
+# fields to use in compsosite SED construction, deep and wide
 good_fields = ['bootes', 'cdfs_swire', 'elais_n1', 'elais_s1', 'lockman_swire', 'xmm_lss']
+
+fieldtranslations = {'s82': 'Herschel-Stripe-82', 'ssdf': 'SSDF', 'xmm_lss': 'XMM-LSS', 'bootes': 'Bootes',
+                     'cdfs_swire': 'CDFS-SWIRE', 'cosmos': 'COSMOS', 'elais_n1': 'ELAIS-N1', 'elais_s1': 'ELAIS-S1',
+                     'lockman_swire': 'Lockman SWIRE'}
 
 # fluxes in muJy below which the HELP algorithm deems posterior estimates of flux become non-gaussian
 mips_gauss_cut = {'akari_nep': 30, 'akari_sep': 40, 'bootes': 20,
@@ -268,6 +282,7 @@ def append_lofar_data(table):
 
 	return table
 
+# convert band names from HELP catalog to corresponding CIGALE filter names
 def convert_filternames(filterset, fkey='f_', ferr_key='ferr_'):
 	cigale_names = [help_to_cigale_filters[filtername] for filtername in filterset]
 	cigale_err_names = ['%s_err' % name for name in cigale_names]
@@ -310,7 +325,7 @@ def write_table_for_cigale(table, filterset, photoz=False):
 def peak_wavelengths_from_filters(filterset):
 	import pandas as pd
 	cigalefilternames = [help_to_cigale_filters[filtername] for filtername in filterset]
-	path_to_cigale = '/Users/graysonpetter/Desktop/Dartmouth/cigale/database_builder/filters/'
+	path_to_cigale = '/Users/graysonpetter/Desktop/Dartmouth/cigale/database_builder/default_filters/'
 	peaklambdas = []
 	for name in cigalefilternames:
 		filterfile = pd.read_csv(path_to_cigale + name + '.dat', comment='#', names=['l', 'r'], delim_whitespace=True)
@@ -320,7 +335,7 @@ def peak_wavelengths_from_filters(filterset):
 
 
 
-
+# plot every flux vs wavelength plot for a catalog
 def plot_each_observed_sed(table, filternames):
 	import plotting
 	oldplots = glob.glob('plots/individual_seds/*')
@@ -342,12 +357,13 @@ def plot_each_observed_sed(table, filternames):
 	plotting.plot_every_observed_sed(fluxtable=fluxtable.as_array(), fluxerrtable=fluxerrtable.as_array(),
 	                                 eff_wavelengths=wavelengths, zs=table['Z_best'])
 
+# check where objects lie within a given HELP field with its corresponding MOC file
 def in_help_moc(ras, decs, helpfield):
 	fieldmoc = MOC.from_fits('../data/HELP/%s/moc.fits' % helpfield)
 	goodidxs = fieldmoc.contains(ras * u.deg, decs * u.deg)
 	return goodidxs
 
-
+#
 def match_help_catwise(catwiseras, catwisedecs, binnumbers, helpfield, seplimit=2.5 * u.arcsec):
 	catwisecoords = SkyCoord(catwiseras * u.deg, catwisedecs * u.deg)
 
@@ -363,6 +379,7 @@ def match_help_catwise(catwiseras, catwisedecs, binnumbers, helpfield, seplimit=
 	helpcat.write('../data/HELP/%s/%s_matched.fits' % (helpfield, helpfield), format='fits', overwrite=True)
 
 
+# take entire HELP catalog for a field and write a smaller catalog containing only RA, Dec, IRAC2 mag
 def write_sparse_help_catalog(helpfield):
 	helptab = Table.read('../data/HELP/%s/%s_full.fits' % (helpfield, helpfield))
 	try:
@@ -478,27 +495,43 @@ def get_objects_with_k_imaging(ras, decs, k_mujy_limit, helpfield):
 	return idxs
 
 
+def append_zbest(t, zqual_cut=3):
+	t['Z_best'] = t['redshift']
+
+	goodspecz = np.where((t['zspec'] > 0) & (t['zspec'] < 10) & (t['zspec_qual'] >= zqual_cut))
+	t['Z_best'][goodspecz] = t['zspec'][goodspecz]
+	return t
+
+
+#
 def complete_masking(helpfield):
 	print('masking ' + helpfield)
 
+	# read lightweight HELP table which only has RAs, Dec, IRAC2 mags
 	helpcat = Table.read('../data/HELP/%s/%s_sparse.fits' % (helpfield, helpfield))
+	# mask bright stars
 	helpcat = helpcat[mask_star_regions(helpcat['ra'], helpcat['dec'], helpfield)]
+	# limit to sky with spitzer coverage
 	helpcat = helpcat[get_objects_in_spitzer_footprint(helpcat['ra'].value, helpcat['dec'].value, helpfield,
 	                                                   w2_vega_limit=17,
 	                                                   cade_masks=True)]
+	# limit to sky with deep K or Ks imaging
 	helpcat = helpcat[get_objects_with_k_imaging(helpcat['ra'], helpcat['dec'], 20, helpfield)]
+	# limit to detections in IRAC2, as WISE AGN should be detected
 	try:
 		helpcat = helpcat[np.where(np.isfinite(helpcat['m_ap_irac_i2']))]
 	except:
 		helpcat = helpcat[np.where(np.isfinite(helpcat['m_irac_i2']))]
 
-
+	# write table of HELP IRAC2 detections in good regions
 	helpcat.write('../data/HELP/%s/%s_masked.fits' % (helpfield, helpfield), format='fits', overwrite=True)
 
+	# read WISE AGN catalog
 	agncat = Table.read('catalogs/derived/catwise_binned.fits')
+	# constrain to within the footprint of the HELP field
 	agncat = agncat[in_help_moc(agncat['RA'], agncat['DEC'], helpfield)]
 
-
+	# apply same masking to WISE AGN
 	agncat = agncat[mask_star_regions(agncat['RA'] * u.deg, agncat['DEC'] * u.deg, helpfield)]
 
 	agncat = agncat[np.where(agncat['W2mag'] > 13)]
@@ -509,12 +542,13 @@ def complete_masking(helpfield):
 
 	agncat.write('../data/HELP/%s/wise_agn.fits' % helpfield, format='fits', overwrite=True)
 
+	# match between WISE AGN and HELP objects
 	match_help_catwise(agncat['RA'], agncat['DEC'], agncat['bin'], helpfield)
 
 
-
+# deprecated
 def tap_help_master_list(helpfield):
-	fieldtranslations = {'s82': 'Herschel-Stripe-82', 'ssdf': 'SSDF'}
+
 	print('matching %s to master-list' % helpfield)
 	import pyvo as vo
 	from math import ceil
@@ -572,10 +606,8 @@ def make_master_catalog(fields):
 		newt['350_nongauss'] = np.int32((newt['f_spire_350'] < spire_350_gauss_cut[fields[j]]))
 		newt['500_nongauss'] = np.int32((newt['f_spire_500'] < spire_500_gauss_cut[fields[j]]))
 		t = vstack((t, newt))
-	t['Z_best'] = t['redshift']
-	goodspecz = np.where((t['zspec'] > 0) & (t['zspec'] < 10))
-	t['Z_best'][goodspecz] = t['zspec'][goodspecz]
-	t = t[np.where((t['Z_best'] > 0) & (t['ferr_spire_250'] > 0))]
+	t = append_zbest(t)
+	#t = t[np.where((t['Z_best'] > 0) & (t['ferr_spire_250'] > 0))]
 	t.write('../data/HELP/master_agn_catalog.fits', format='fits', overwrite=True)
 
 
@@ -690,6 +722,33 @@ def prep_cigale_init(xray=False, radio=False, vary_inclination=False, vary_tau=F
 
 	os.chdir(curdir)
 
+def tap_donley_agn(helpfield):
+	import agn_criteria
+	import pyvo as vo
+	service = vo.dal.TAPService("https://herschel-vos.phys.sussex.ac.uk/__system__/tap/run/tap")
+	adql = """SELECT *
+	                    FROM help_a_list.main AS db
+	                        WHERE db.field = '%s' AND db.m_irac_i4 IS NOT NULL""" % fieldtranslations[helpfield]
+	alistcat = service.search(adql)
+	alistcat = alistcat.to_table()
+	alistcat.remove_columns(['field', 'help_id', 'stellarity_origin'])
+
+	spitzer_detection_idxs = np.where((alistcat['f_irac_i1'] > 0) &
+	                                  (alistcat['f_irac_i2'] > 0) &
+	                                  (alistcat['f_irac_i3'] / alistcat['ferr_irac_i3'] > 3) &
+	                                  (alistcat['f_irac_i4'] / alistcat['ferr_irac_i4'] > 3))
+	alistcat = alistcat[spitzer_detection_idxs]
+	donleycat = alistcat[agn_criteria.donley_selection_flux(alistcat['f_irac_i1'], alistcat['f_irac_i2'],
+	                                                     alistcat['f_irac_i3'], alistcat['f_irac_i4'])]
+	donleycat = append_zbest(donleycat)
+	donleycat.write('../data/HELP/%s/%s_donley.fits' % (helpfield, helpfield), format='fits', overwrite=True)
+
+
+
+
+
+
+
 
 
 
@@ -770,7 +829,7 @@ def rest_frame_seds(filternames, catalog):
 	return rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu
 
 
-def normalize_seds(rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu, rest_lambda):
+def normalize_seds(secure_redshift_idx, rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu, rest_lambda):
 	import plotting
 	interp_lum_list = []
 	for j in range(len(obs_nu_f_nu)):
@@ -780,7 +839,7 @@ def normalize_seds(rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu, rest_lambda):
 		                                                obs_nu_f_nu[j][good_filters])(rest_lambda))
 
 	interp_lum_list = np.array(interp_lum_list)
-	median_lum = np.median(interp_lum_list)
+	median_lum = np.median(interp_lum_list[secure_redshift_idx])
 	lum_ratios = np.array(median_lum / interp_lum_list)
 
 
@@ -799,6 +858,8 @@ def normalize_seds(rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu, rest_lambda):
 
 	return rest_wavelengths, obs_nu_f_nu, obs_nu_ferr_nu, median_lum, lum_ratios
 
+
+# composite SED
 def construct_composite(rest_wavelengths, nu_f_nu, nu_f_nu_errs, rest_wavelength_bins, nondetection_sigma=1):
 	import matplotlib.pyplot as plt
 	from source import survival
@@ -808,6 +869,7 @@ def construct_composite(rest_wavelengths, nu_f_nu, nu_f_nu_errs, rest_wavelength
 	survival_analysis = False
 	# keep track of which rest wavelength bin each flux falls into for each object
 	wavelength_bin_idxs = []
+	# for each source with redshift, find rest wavelength bin for each measured flux
 	for j in range(len(nu_f_nu)):
 		wavelength_bin_idxs.append(np.digitize(rest_wavelengths[j], rest_wavelength_bins))
 	wavelength_bin_idxs = np.array(wavelength_bin_idxs)
@@ -816,10 +878,10 @@ def construct_composite(rest_wavelengths, nu_f_nu, nu_f_nu_errs, rest_wavelength
 
 
 	binned_nu_f_nu, binned_lower_errs, binned_upper_errs = [], [], []
-	# for each wavelength bin
-	for j in range(len(rest_wavelength_bins)):
-		# find all fluxes in that bin
-		inbinidxs = np.where(wavelength_bin_idxs == j)
+	# for each rest frame wavelength bin
+	for j in range(len(rest_wavelength_bins)-1):
+		# find all fluxes falling in that bin
+		inbinidxs = np.where(wavelength_bin_idxs == j+1)
 		nfnu_in_bin = nu_f_nu[inbinidxs]
 		nfnu_err_in_bin = nu_f_nu_errs[inbinidxs]
 		# remove nans because they weren't observed in that band
@@ -827,8 +889,7 @@ def construct_composite(rest_wavelengths, nu_f_nu, nu_f_nu_errs, rest_wavelength
 		nfnu_in_bin = nfnu_in_bin[observed_idxs]
 		nfnu_err_in_bin = nfnu_err_in_bin[observed_idxs]
 
-
-		#print('%s measurements in bin' % len(nfnu_in_bin))
+		# don't take median if < 20% of sources were observed in this bin
 		if len(nfnu_in_bin) / nsources < 0.2:
 			binned_nu_f_nu.append(np.nan), binned_lower_errs.append(np.nan), binned_upper_errs.append(np.nan)
 
@@ -892,20 +953,38 @@ def measure_composites(wavelength_bins):
 	mastercat = Table.read('../data/HELP/master_agn_catalog.fits')
 
 	nbins = np.int(np.max(mastercat['bin']))
-	binnedseds, lowerrs, uperrs = [], [], []
+	binned_fluxs, binnedseds, lowerrs, uperrs = [], [], [], []
 
+
+	custom_pivot_wavelengths = interpolate_tools.bin_centers(wavelength_bins, method='geo_mean')
+	restfreqs = (con.c / (custom_pivot_wavelengths * u.micron)).to('Hz').value
+
+
+	# keep track of normalization factors
 	all_lum_ratios = []
-	constmedlum = 0
+	constmedlum, inverse_square_factor = 0, 0
+	# for each sample of quasars
 	for j in range(nbins):
 		binlumratios = []
 		binnedcat = mastercat[np.where(mastercat['bin'] == j+1)]
 		restlam, obsnu, obsnuerr = rest_frame_seds(best_filterset, binnedcat)
 
+		# determine source with a secure spectroscopic redshift at z=1 to use as luminosity normalizer
+		secure_redshift_idxs = np.where((binnedcat['zspec_qual'] >= 3))
 
-		restlam, obsf, obserr, medlum, lum_ratios = normalize_seds(restlam, obsnu, obsnuerr, 6.)
+		secure_typical_redshift_idx = np.abs(binnedcat[secure_redshift_idxs]['zspec'] - 1.).argmin()
+		secure_typical_redshift = binnedcat[secure_redshift_idxs]['zspec'][secure_typical_redshift_idx]
+		secure_typical_redshift_idx = np.where(binnedcat['zspec'] == secure_typical_redshift)
 
+		# normalize SEDs at 6 micron
+		restlam, obsf, obserr, medlum, lum_ratios = normalize_seds(secure_typical_redshift_idx, restlam, obsnu,
+		                                                           obsnuerr, 6.)
+		# if considering the unobscured bin, take the source closest to z=1 as the luminosity normalizer
 		if j == 0:
 			constmedlum = medlum
+			inverse_square_factor = 4 * np.pi * apcosmo.luminosity_distance(secure_typical_redshift).to('m').value ** 2
+
+		# if considering the obscsured sample, use the previously determined luminosity normalizer
 		else:
 			norm_between_bins = constmedlum / medlum
 			obsf *= norm_between_bins
@@ -915,11 +994,45 @@ def measure_composites(wavelength_bins):
 		all_lum_ratios.append(binlumratios)
 
 		sed, loerr, hierr = construct_composite(restlam, obsf, obserr, wavelength_bins)
-		binnedseds.append(sed), lowerrs.append(loerr), uperrs.append(hierr)
+		sed_flux = np.array(sed) / restfreqs
+
+		binned_fluxs.append(sed_flux), binnedseds.append(sed), lowerrs.append(loerr), uperrs.append(hierr)
+
+	binnedseds = np.array(binnedseds)
+	eff_wavelengths = interpolate_tools.bin_centers(wavelength_bins, method='geo_mean')
 
 	import plotting
-	plotting.plot_luminosity_distributions(constmedlum, all_lum_ratios)
-	plotting.plot_composite_sed(nbins, wavelength_bins, binnedseds, lowerrs, uperrs)
+	unit_conversion = (u.uJy * u.Hz * (u.m) ** 2).to('erg/s')
+	plotting.plot_luminosity_distributions(constmedlum * inverse_square_factor * unit_conversion, all_lum_ratios)
+	plotting.plot_composite_sed(nbins, eff_wavelengths, binnedseds, lowerrs, uperrs)
+
+	np.array(wavelength_bins).dump('composite_seds/wavelength_bins.npy')
+	np.array(binnedseds).dump('composite_seds/binned_seds.npy')
+	np.array(binned_fluxs).dump('composite_seds/binned_fluxes.npy')
+	np.array([lowerrs, uperrs]).dump('composite_seds/sed_errs.npy')
+
+
+def fit_composites():
+	wavelength_bins = np.load('composite_seds/wavelength_bins.npy', allow_pickle=True)
+	binnedseds = np.load('composite_seds/binned_fluxes.npy', allow_pickle=True)
+
+	lowerrs, uperrs = np.load('composite_seds/sed_errs.npy', allow_pickle=True)
+	dl = apcosmo.luminosity_distance(1.).value
+
+	with open('cigale_files/cigale_input2.txt', 'w') as f:
+		collist = ['id ', 'redshift ', 'distance ']
+		collist += ['%s ' % j for j in range(42)]
+		collist += ['%s_err ' % j for j in range(42)]
+		collist += ['\n']
+		f.writelines(collist)
+		for k in range(len(binnedseds)):
+			datalist = ['%s ' % (k+1), '0. ', '%s ' % dl]
+			#print(['%s ' % j for j in lowerrs[k]])
+			datalist += ['%s ' % j for j in binnedseds[k]]
+			datalist += ['%s ' % j for j in lowerrs[k]]
+			datalist += ['\n']
+			f.writelines(list(datalist))
+
 
 
 
@@ -927,7 +1040,24 @@ custom_wavelengthbins = np.array(list(np.logspace(-1.1, 0.3, 30)) + \
                         list(np.logspace(0.3, 1, 5))[1:] + \
                         list(np.logspace(1.6, 2.5, 10)))
 
+def fake_filters(fake_bins, ref_z=1.):
+	#
+	fake_bins = fake_bins * 10000. * (1 + ref_z)
+	for j in range(len(fake_bins)-1):
+		fakewavelengths = np.linspace(fake_bins[j], fake_bins[j+1], 10)
+		with open('../cigale/database_builder/fake_filters/%s.dat' % j, 'w') as f:
+			f.write('# %s\n' % j)
+			f.write('# energy\n')
+			f.write('# %s\n' % j)
+			for j in range(len(fakewavelengths)):
+				f.write(' %s   %s\n' % (round(fakewavelengths[j], 2), 1.))
+
+
+#fake_filters(custom_wavelengthbins)
+
 
 
 #prepare_help_data(good_fields)
-measure_composites(custom_wavelengthbins)
+#measure_composites(custom_wavelengthbins)
+#tap_donley_agn('bootes')
+fit_composites()
