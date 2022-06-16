@@ -24,6 +24,9 @@ from astropy.table import Table
 
 # stacks many projections by breaking up list into chunks and processing each chunk in parallel
 def stack_mp(stackmap, ras, decs, pool, weighting=None, prob_weights=None, nstack=None, outname=None, imsize=240, chunksize=500, reso=1.5):
+	idxs = np.where((decs < -40) & (decs > -70))
+	ras, decs = ras[idxs], decs[idxs]
+
 	if weighting is None:
 		weighting = np.ones(len(ras))
 	if nstack is None:
@@ -32,7 +35,8 @@ def stack_mp(stackmap, ras, decs, pool, weighting=None, prob_weights=None, nstac
 	# the number of chunks is the number of stacks divided by the chunk size rounded up to the nearest integer
 	nchunks = ceil(nstack/chunksize)
 
-	lons, lats = stacking.equatorial_to_galactic(ras, decs)
+	#lons, lats = stacking.equatorial_to_galactic(ras, decs)
+	lons, lats = ras, decs
 
 	starttime = time.time()
 
@@ -74,10 +78,11 @@ if __name__ == "__main__":
 	pool = schwimmbad.choose_pool(mpi=args.mpi, processes=args.n_cores)
 
 	imsize = 100
-	reso = 2.
+	#reso = 2.
+	reso = 1.
 
 
-	planck_map = hp.read_map('lensing_maps/planck/smoothed_masked.fits', dtype=np.single)
+	planck_map = hp.read_map('lensing_maps/SPTpol/smoothed_masked.fits', dtype=np.single)
 
 	outname = 'lens_stacks/catwise_stack'
 

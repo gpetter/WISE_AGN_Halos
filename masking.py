@@ -7,6 +7,7 @@ import healpy as hp
 import numpy as np
 import healpixhelper
 import importlib
+from source import coord_transforms
 importlib.reload(healpixhelper)
 
 # take a binary mask and properly downgrade it to a lower resolution, expanding the mask to cover all pixels which
@@ -25,7 +26,8 @@ def ls_depth_mask(nside, galactic=False):
 
 
 	if galactic:
-		lons, lats = healpixhelper.equatorial_to_galactic(tab['RA'], tab['DEC'])
+		#lons, lats = healpixhelper.equatorial_to_galactic(tab['RA'], tab['DEC'])
+		lons, lats = tab['l'], tab['b']
 	else:
 		lons, lats = tab['RA'], tab['DEC']
 
@@ -68,36 +70,6 @@ def ls_depth_mask(nside, galactic=False):
 	#hp.write_map('masks/ls_badmask.fits', lsmask, overwrite=True)"""
 
 
-# deprecated: masking obviously bad regions chosen by hand
-def mask_bad_data(nside):
-	ls, bs = hp.pix2ang(nside, np.arange(hp.nside2npix(nside)), lonlat=True)
-	ras, decs = healpixhelper.galactic_to_equatorial(ls, bs)
-
-	badidxlist = []
-	with open('masks/diffraction_spikes.txt', 'r') as f:
-		lines = f.readlines()
-
-		for line in lines:
-			line = line.split("\n")[0]
-			pars = np.array(line.split(' ')).astype('float')
-
-			idxs = np.where((ras > pars[0]) & (ras < pars[1]) & (decs > (ras * pars[3] + pars[2] - pars[4])) & (decs
-			        < (ras * pars[3] + pars[2] + pars[4])))
-			badidxlist += list(idxs[0])
-	with open('masks/circular_masks.txt', 'r') as f:
-		lines = f.readlines()
-
-		for line in lines:
-			line = line.split("\n")[0]
-			pars = np.array(line.split(' ')).astype('float')
-
-			idxs = np.where((ras > pars[0] - pars[2]) & (ras < pars[0] + pars[2]) & (decs > pars[1] - pars[2]) & (
-				decs < pars[1] + pars[2]))
-			badidxlist += list(idxs[0])
-
-	mask = np.ones(hp.nside2npix(nside))
-	mask[badidxlist] = 0
-	return mask
 
 
 # deprecated: masking circular regions near objects chosen by hand
@@ -146,7 +118,7 @@ def assef_mask(nside):
 # mask regions around bright infrared stars
 def mask_bright_stars(nside):
 	bright_w3_cat = Table.read('catalogs/bright_sources/bright_w3.fits')
-	very_bright_w3_cat = bright_w3_cat[np.where(bright_w3_cat['w3mpro'] < -2)]
+	very_bright_w3_cat = bright_w3_cat[np.where(bright_w3_cat['w3mpro'] < -1.5)]
 	brightlons, brightlats = healpixhelper.equatorial_to_galactic(very_bright_w3_cat['RA'], very_bright_w3_cat['DEC'])
 	vecs = hp.ang2vec(brightlons, brightlats, lonlat=True)
 	mask = np.ones(hp.nside2npix(nside))
@@ -157,21 +129,30 @@ def mask_bright_stars(nside):
 	hp.write_map('masks/bright_mask.fits', mask, overwrite=True)
 
 
+def mask_ecliptic_caps(nside):
+	mask = np.ones(hp.nside2npix(nside))
+	l, b = hp.pix2ang(nside, np.arange(hp.nside2npix(nside)), lonlat=True)
+	lon, lat = coord_transforms.sky_transform(lons=l, lats=b, trans=['G', 'E'])
+	bad_pix = np.where(np.abs(lat) > 80)
+	mask[bad_pix] = 0
+	hp.write_map('masks/ecliptic_caps.fits', mask, overwrite=True)
 
-
-"""def planck_mask(tab):
-	lons, lats = healpixhelper.equatorial_to_galactic(tab['RA'], tab['DEC'])
-	planckmask = hp.read_map('lensing_maps/planck/mask.fits')
-	pix = hp.ang2pix(2048, lons, lats, lonlat=True)
-	tab = tab[np.where(planckmask[pix] == 1)]
-	return tab
-"""
-
+def mask_saa_stripes(nside):
+	mask = np.ones(hp.nside2npix(nside))
+	l, b = hp.pix2ang(nside, np.arange(hp.nside2npix(nside)), lonlat=True)
+	lon, lat = coord_transforms.sky_transform(lons=l, lats=b, trans=['G', 'E'])
+	bad_pix = np.where((lon > 196) & (lon < 199) & (lat < 3) & (lat > -3))
+	mask[bad_pix] = 0
+	bad_pix = np.where((lon > 188) & (lon < 193) & (lat < 76) & (lat > 55))
+	mask[bad_pix] = 0
+	hp.write_map('masks/saa.fits', mask, overwrite=True)
 
 def write_masks(nside):
-	ls_depth_mask(nside, galactic=True)
-	#assef_mask(nside)
+	#ls_depth_mask(nside, galactic=True)
+	assef_mask(nside)
 	mask_bright_stars(nside)
+	mask_ecliptic_caps(nside)
+	mask_saa_stripes(nside)
 
 
 def decode_bitmask(bitmasks):
@@ -181,7 +162,8 @@ def decode_bitmask(bitmasks):
 		remainder -= largest_bit
 
 
-def total_mask(depth_cut, assef, unwise, planck, bright, ebv, ls_mask, zero_depth_mask, gal_lat_cut=0):
+def total_mask(depth_cut, assef, unwise, planck, bright, ebv, ls_mask, zero_depth_mask, gal_lat_cut=0,
+               area_lost_thresh=None, capmask=True, mask_saa=True):
 
 	mask = hp.read_map('masks/ls_depth.fits', dtype=np.float64)
 	mask[np.where(np.logical_not(np.isfinite(mask)))] = 0
@@ -211,9 +193,9 @@ def total_mask(depth_cut, assef, unwise, planck, bright, ebv, ls_mask, zero_dept
 		brightmask = hp.read_map('masks/bright_mask.fits')
 		mask[np.where(brightmask == 0)] = 0
 
-	if ebv:
+	if ebv > 0:
 		ebvmask = hp.read_map('masks/ebv.fits')
-		mask[np.where(ebvmask > 0.2)] = 0
+		mask[np.where(ebvmask > ebv)] = 0
 
 	if ls_mask:
 		lsbadmask = hp.read_map('masks/ls_badmask.fits')
@@ -222,6 +204,20 @@ def total_mask(depth_cut, assef, unwise, planck, bright, ebv, ls_mask, zero_dept
 	if zero_depth_mask:
 		zerodepth = hp.read_map('masks/zerodepth_mask.fits')
 		mask[np.where(zerodepth > 0)] = 0
+
+	if area_lost_thresh is not None:
+		arealostmask = hp.read_map('masks/area_lost_combined.fits')
+		mask[np.where(arealostmask > area_lost_thresh)] = 0
+
+	if capmask:
+		maskcap = hp.read_map('masks/ecliptic_caps.fits')
+		newmask = (maskcap == 1).astype(np.int)
+		mask = mask * newmask
+
+	if mask_saa:
+		maskcap = hp.read_map('masks/saa.fits')
+		newmask = (maskcap == 1).astype(np.int)
+		mask = mask * newmask
 
 	if gal_lat_cut > 0:
 		gallon, gallat = hp.pix2ang(hp.npix2nside(len(mask)), np.arange(len(mask)), lonlat=True)
@@ -234,6 +230,7 @@ def total_mask(depth_cut, assef, unwise, planck, bright, ebv, ls_mask, zero_dept
 def mask_tab(tab):
 	totmask = hp.read_map('masks/union.fits')
 
-	lons, lats = healpixhelper.equatorial_to_galactic(tab['RA'], tab['DEC'])
+	#lons, lats = healpixhelper.equatorial_to_galactic(tab['RA'], tab['DEC'])
+	lons, lats = tab['l'], tab['b']
 	return tab[np.where(totmask[hp.ang2pix(hp.npix2nside(len(totmask)), lons, lats, lonlat=True)])]
 

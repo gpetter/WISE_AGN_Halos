@@ -4,14 +4,30 @@ import pandas as pd
 from astropy.stats import sigma_clipped_stats
 from astropy.convolution import Gaussian2DKernel
 from scipy.signal import convolve as scipy_convolve
-#from pixell import enmap, reproject, utils
+
 from astropy.table import Table
 import masking
 import glob
 import astropy.units as u
 
-# number of sides to each healpix pixel
-#nsides = 2048
+
+def rotate_mask(mask, coords=['C', 'G'], conservative=True):
+    mask = np.array(mask, dtype=bool)
+    transform = hp.Rotator(coord=coords)
+    # https://stackoverflow.com/questions/68010539/healpy-rotate-a-mask-
+    # together-with-the-map-in-hp-ma-vs-separately-produce-di#
+    m = hp.ma(np.arange(len(mask), dtype=np.float32))
+    m.mask = mask
+
+    # if you use a float mask and rotate, healpix interpolates near border
+    if conservative:
+        rotated_mask = transform.rotate_map_pixel(m.mask)
+        # round the interpolated values to 0 or 1
+        return np.around(rotated_mask)
+    # otherwise, healpix just rotates the binary mask without interpolation, might be unsafe
+    else:
+        return transform.rotate_map_pixel(m.mask)
+
 
 
 # take in healpix map which defaults to using the UNSEEN value to denote masked pixels and return
@@ -106,13 +122,17 @@ def mask_map(map, mask, outmap):
 
 
 # input klm file and output final smoothed, masked map for analysis
-def klm_2_product(klmname, width, maskname, nsides, lmin, coord=None, subtract_mf=False, writename=None):
+def klm_2_product(klmname, width, nsides, lmin, maskname=None, lmax=None, coord=None, subtract_mf=False,
+                  writename=None):
 
     # read in planck alm convergence data
     planck_lensing_alm = hp.read_alm(klmname)
 
-    # trying to generate map from l modes >~ 2*nside causes ringing
-    lmax_cut = 2 * nsides
+    if lmax is None:
+        # trying to generate map from l modes >~ 2*nside causes ringing
+        lmax_cut = 2 * nsides
+    else:
+        lmax_cut = lmax
 
     # if you're going to transform coordinates, usually from equatorial to galactic
     if coord is not None:
@@ -142,47 +162,78 @@ def klm_2_product(klmname, width, maskname, nsides, lmin, coord=None, subtract_m
 
     planck_lensing_map = hp.sphtfunc.alm2map(filtered_alm, nsides, lmax=lmax_fixed)
 
-    # mask map
-    importmask = hp.read_map(maskname)
-    mask_nside = hp.npix2nside(len(importmask))
-    if nsides != mask_nside:
-        """mask_proper = hp.ud_grade(importmask.astype(float), nside_out=nsides).astype(float)
+    if maskname is not None:
+        # mask map
+        importmask = hp.read_map(maskname)
+        mask_nside = hp.npix2nside(len(importmask))
+        if nsides != mask_nside:
 
-        if nsides < mask_nside:
-            finalmask = np.where(mask_proper == 1., True, False).astype(bool)
+            finalmask = masking.downgrade_mask(importmask, nsides)
         else:
-            finalmask = np.where(mask_proper > 0, True, False).astype(bool)"""
-        finalmask = masking.downgrade_mask(importmask, nsides)
+            finalmask = importmask.astype(np.bool)
+
+        # set mask, invert
+        smoothed_masked_map = hp.ma(planck_lensing_map)
+        smoothed_masked_map.mask = np.logical_not(finalmask)
+        if writename:
+            hp.write_map('%s.fits' % writename, smoothed_masked_map.filled(), overwrite=True, dtype=np.single)
     else:
-        finalmask = importmask.astype(np.bool)
+        if writename:
+            hp.write_map('%s.fits' % writename, planck_lensing_map, overwrite=True, dtype=np.single)
 
 
-    if coord is not None:
-        r = hp.Rotator(coord=[coord, 'G'])
-        finalmask = r.rotate_map_pixel(finalmask)
-    # set mask, invert
-    smoothed_masked_map = hp.ma(planck_lensing_map)
-    smoothed_masked_map.mask = np.logical_not(finalmask)
 
+def write_planck_maps(real, noise, width, nsides, lmin, lmax):
+    planckmask = hp.read_map('lensing_maps/planck/mask_2048.fits')
+    # apodization will be handled by pymaster, so just downgrade binary mask to correct resolution
+    if hp.npix2nside(len(planckmask)) != nsides:
+        planckmask = masking.downgrade_mask(planckmask, newnside=nsides)
 
-    if writename:
-        hp.write_map('%s.fits' % writename, smoothed_masked_map.filled(), overwrite=True, dtype=np.single)
-
-    return smoothed_masked_map.filled()
-
-
-def write_planck_maps(real, noise, width, nsides, lmin):
+    hp.write_map('lensing_maps/planck/mask.fits', planckmask, overwrite=True)
     if real:
         klm_2_product(klmname='lensing_maps/planck/dat_klm.fits', width=0*u.arcmin,
-                      maskname='lensing_maps/planck/mask.fits',
-                      nsides=nsides, lmin=lmin, writename='lensing_maps/planck/unsmoothed_masked')
-        klm_2_product(klmname='lensing_maps/planck/dat_klm.fits', width=width, maskname='lensing_maps/planck/mask.fits',
-                      nsides=nsides, lmin=lmin, writename='lensing_maps/planck/smoothed_masked')
+                      maskname=None, lmax=lmax,
+                      nsides=nsides, lmin=lmin, writename='lensing_maps/planck/unsmoothed')
+        if width > 0:
+            klm_2_product(klmname='lensing_maps/planck/dat_klm.fits', width=width*u.arcmin,
+                          maskname='lensing_maps/planck/mask.fits',
+                          nsides=nsides, lmin=lmin, writename='lensing_maps/planck/smoothed_masked')
     if noise:
         realsnames = glob.glob('lensing_maps/planck/noise/klms/sim*')
         for j in range(len(realsnames)):
-            klm_2_product(realsnames[j], width=0*u.arcmin, maskname='lensing_maps/planck/mask.fits', nsides=nsides,
+            klm_2_product(realsnames[j], width=0*u.arcmin, maskname=None, nsides=nsides, lmax=lmax,
                           lmin=lmin, writename='lensing_maps/planck/noise/maps/%s' % j)
+
+def write_spt_maps(width, nsides, lmin, lmax, noise=True):
+    sptmask = hp.read_map('lensing_maps/SPT/mask4096_sptnominal_gauss30am_full_6_50_500_r3_r6_r9_tsz6_r5_withloose20_withsimonly_withlowclus_r5_a5.fits')
+
+    # rotate SPT mask to Galactic
+    transform = hp.Rotator(coord=['C', 'G'])
+    spt_gal_mask = transform.rotate_map_pixel(sptmask)
+    # turn into binary mask
+    spt_gal_mask[np.where(spt_gal_mask < 0.5)] = 0
+    spt_gal_mask[np.where(spt_gal_mask > 0.5)] = 1
+    # downgrade to correct resolution
+    spt_gal_mask = masking.downgrade_mask(spt_gal_mask, newnside=nsides)
+
+    hp.write_map('lensing_maps/SPT/mask.fits', spt_gal_mask, overwrite=True)
+
+
+    klm_2_product(klmname='lensing_maps/SPT/spt_gal.alm', width=0 * u.arcmin,
+                  maskname=None,
+                  nsides=nsides, lmin=lmin, lmax=lmax, writename='lensing_maps/SPT/unsmoothed')
+    klm_2_product(klmname='lensing_maps/SPT/spt_gal.alm',
+                  width=width*u.arcmin,
+                  maskname='lensing_maps/SPT/mask.fits',
+                  nsides=nsides, lmin=lmin, writename='lensing_maps/SPT/smoothed_masked')
+
+
+    if noise:
+        realsnames = sorted(glob.glob('lensing_maps/SPT/noise/klms/sim*'))
+        for j in range(len(realsnames)):
+            klm_2_product(realsnames[j], width=0*u.arcmin, maskname=None, nsides=nsides, lmax=lmax,
+                          lmin=lmin, writename='lensing_maps/SPT/noise/maps/%s' % j)
+
 
 
 
@@ -205,21 +256,29 @@ def weak_lensing_map(tomo_bin='tomo4', reconstruction='wiener', width=0*u.arcmin
 
 
 
-"""def ACT_map(nside, lmax, smoothfwhm):
-    bnlensing = enmap.read_map('ACTlensing/act_planck_dr4.01_s14s15_BN_lensing_kappa_baseline.fits')
-    #bnlensing = enmap.read_map('ACTlensing/act_dr4.01_s14s15_BN_lensing_kappa.fits')
-    bnmask = enmap.read_map('ACTlensing/act_dr4.01_s14s15_BN_lensing_mask.fits')
+def ACT_map(nside, lmin, lmax, smoothfwhm=None):
+    from pixell import enmap, reproject, utils
+    import healpixhelper
+    bnlensing = enmap.read_map('lensing_maps/ACT/act_planck_dr4.01_s14s15_BN_lensing_kappa_baseline.fits')
+    bnmask = enmap.read_map('lensing_maps/ACT/act_dr4.01_s14s15_BN_lensing_mask.fits')
     wc_bn_mean = np.mean(np.array(bnmask) ** 2)
     bnlensing = bnlensing * wc_bn_mean
 
     bnlensing_hp = reproject.healpix_from_enmap(bnlensing, lmax=lmax, nside=nside)
     bnlensing_alm = hp.map2alm(bnlensing_hp, lmax=lmax)
-    bnlensing_alm = zero_modes(bnlensing_alm, 100)
+    bnlensing_alm = zero_modes(bnlensing_alm, lmin_cut=lmin, lmax_cut=lmax)
+    r = hp.Rotator(coord=['C', 'G'])
+    bnlensing_alm = r.rotate_alm(bnlensing_alm)
+
     bnlensing_hp = hp.alm2map(bnlensing_alm, nside, lmax)
 
+    bnmask_hpx = reproject.healpix_from_enmap(bnmask, lmax=lmax, nside=nside)
+    bnmask_gal = healpixhelper.change_coord(bnmask_hpx, ['C', 'G'])
+    bnmask_gal[np.where(bnmask_gal > 0.8)] = 1
+    bnmask_gal[np.where(bnmask_gal <= 0.8)] = 0
 
-
-    wc_bn = reproject.healpix_from_enmap(bnmask, lmax=lmax, nside=nside)
+    hp.write_map('lensing_maps/ACT_BN/unsmoothed.fits', bnlensing_hp, overwrite=True)
+    hp.write_map('lensing_maps/ACT_BN/mask.fits', bnmask_gal, overwrite=True)
 
 
     #wc_bn_mean = np.mean(wc_bn**2)
@@ -227,65 +286,41 @@ def weak_lensing_map(tomo_bin='tomo4', reconstruction='wiener', width=0*u.arcmin
 
 
 
-    smoothbn = hp.smoothing(bnlensing_hp, fwhm=(smoothfwhm * u.arcmin.to('rad')))
+    #smoothbn = hp.smoothing(bnlensing_hp, fwhm=(smoothfwhm * u.arcmin.to('rad')))
 
 
-    smoothbn = healpixhelper.change_coord(smoothbn, ['C', 'G'])
-    wc_bn = healpixhelper.change_coord(wc_bn, ['C', 'G'])
-    smoothbn[np.where(wc_bn < 0.8)] = hp.UNSEEN
+    #smoothbn = healpixhelper.change_coord(smoothbn, ['C', 'G'])
 
-    hp.write_map('maps/BN.fits', smoothbn, overwrite=True)
+    #smoothbn[np.where(wc_bn < 0.8)] = hp.UNSEEN
 
+    d56lensing = enmap.read_map('lensing_maps/ACT/act_planck_dr4.01_s14s15_D56_lensing_kappa_baseline.fits')
+    d56mask = enmap.read_map('lensing_maps/ACT/act_dr4.01_s14s15_D56_lensing_mask.fits')
+    wc_d56_mean = np.mean(np.array(d56mask) ** 2)
+    d56lensing = d56lensing * wc_d56_mean
 
-    dlensing = enmap.read_map('ACTlensing/act_planck_dr4.01_s14s15_D56_lensing_kappa_baseline.fits')
-    dmask = enmap.read_map('ACTlensing/act_dr4.01_s14s15_D56_lensing_mask.fits')
-    wc_d_mean = np.mean(np.array(dmask) ** 2)
-    dlensing = dlensing * wc_d_mean
-    #dlensing = enmap.read_map('ACTlensing/act_dr4.01_s14s15_D56_lensing_kappa.fits')
-    dlensing_hp = reproject.healpix_from_enmap(dlensing, lmax=lmax, nside=nside)
-    dlensing_alm = hp.map2alm(dlensing_hp, lmax=lmax)
-    dlensing_alm = zero_modes(dlensing_alm, 100)
-    dlensing_hp = hp.alm2map(dlensing_alm, nside, lmax)
+    d56lensing_hp = reproject.healpix_from_enmap(d56lensing, lmax=lmax, nside=nside)
+    d56lensing_alm = hp.map2alm(d56lensing_hp, lmax=lmax)
+    d56lensing_alm = zero_modes(d56lensing_alm, lmin_cut=lmin, lmax_cut=lmax)
+    r = hp.Rotator(coord=['C', 'G'])
+    d56lensing_alm = r.rotate_alm(d56lensing_alm)
 
+    d56lensing_hp = hp.alm2map(d56lensing_alm, nside, lmax)
 
+    d56mask_hpx = reproject.healpix_from_enmap(d56mask, lmax=lmax, nside=nside)
+    d56mask_gal = healpixhelper.change_coord(d56mask_hpx, ['C', 'G'])
+    d56mask_gal[np.where(d56mask_gal > 0.8)] = 1
+    d56mask_gal[np.where(d56mask_gal <= 0.8)] = 0
 
+    hp.write_map('lensing_maps/ACT_D56/unsmoothed.fits', d56lensing_hp, overwrite=True)
+    hp.write_map('lensing_maps/ACT_D56/mask.fits', d56mask_gal, overwrite=True)
 
-    wc_d = reproject.healpix_from_enmap(dmask, lmax=lmax, nside=nside)
-
-    #wc_d_mean = np.mean(wc_d**2)
-
-    #dlensing_hp = dlensing_hp * wc_d_mean
-    smoothd = hp.smoothing(dlensing_hp, fwhm=smoothfwhm*u.arcmin.to('rad'))
-
-
-    smoothd = healpixhelper.change_coord(smoothd, ['C', 'G'])
-    wc_d = healpixhelper.change_coord(wc_d, ['C', 'G'])
-    smoothd[np.where(wc_d < 0.8)] = hp.UNSEEN
-
-    hp.write_map('maps/D56.fits', smoothd, overwrite=True)
-
-
-    ddataidxs = np.where(wc_d > 0.8)
-    combinedmask = wc_bn + wc_d
-
-    smoothbn[ddataidxs] = smoothd[ddataidxs]
-    smoothbn[np.where(combinedmask < 0.8)] = hp.UNSEEN
-
-    hp.write_map('maps/both_ACT.fits', smoothbn, overwrite=True)
-
-
-    planckmap = hp.read_map('maps/smoothed_masked_planck.fits')
-    planckmap[np.where(combinedmask > 0.8)] = smoothbn[np.where(combinedmask > 0.8)]
-
-    hp.write_map('maps/Planck_plus_ACT.fits', planckmap, overwrite=True)
-
-
-    #return smoothbn
-
-
-def sptpol_map(smoothfwhm):
+def sptpol_map(width):
+    from astropy.io import fits
+    from scipy import signal
+    from pixell import enmap, reproject, utils
+    import astropy.wcs as worldcoordsys
     mvarr = np.load('lensing_maps/SPTpol/mv_map.npy')
-    w = wcs.WCS(naxis=2)
+    w = worldcoordsys.WCS(naxis=2)
     w.wcs.crval = [0, -59]
     w.wcs.crpix = [1260.5, 660.5]
     w.wcs.ctype = ["RA---ZEA", "DEC--ZEA"]
@@ -293,13 +328,25 @@ def sptpol_map(smoothfwhm):
     header = w.to_header()
     flippedarr = np.fliplr(np.flipud(mvarr))
     hdu = fits.PrimaryHDU(flippedarr, header=header)
-    hdu.writeto('mv_tmp.fits', overwrite=True)
-    imap = enmap.read_map('mv_tmp.fits')
+    hdu.writeto('lensing_maps/SPTpol/mv_tmp.fits', overwrite=True)
+    imap = enmap.read_map('lensing_maps/SPTpol/mv_tmp.fits')
     hpmap = imap.to_healpix(nside=4096)
-    smoothmap = hp.smoothing(hpmap, fwhm=(smoothfwhm * u.arcmin.to('rad')))
+    if width > 0:
+        smoothmap = hp.smoothing(hpmap, fwhm=(width * u.arcmin.to('rad')))
+    else:
+        #smoothmap = hpmap
+        ls = np.arange(3000)
+
+        def gaussian(x, mu, sig):
+            return np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
+
+        cl = gaussian(ls, 1100, 150)
+        smoothmap = hp.smoothing(hpmap, beam_window=cl)
     pixra, pixdec = hp.pix2ang(4096, np.arange(hp.nside2npix(4096)), lonlat=True)
     smoothmap[np.where(((pixra > 30) & (pixra < 330)) | (pixdec > -50) | (pixdec < -65))] = hp.UNSEEN
     hp.write_map('lensing_maps/SPTpol/smoothed_masked.fits', smoothmap, overwrite=True)
-"""
+
+
+
 
 

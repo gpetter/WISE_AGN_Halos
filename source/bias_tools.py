@@ -11,14 +11,14 @@ importlib.reload(redshift_dists)
 def bias_to_mass(inputbias, z):
 	masses = np.logspace(10, 14, 1000)
 	biases_from_masses = bias.haloBias(M=masses, z=z, mdef='200c', model='tinker10')
-	return np.interp(inputbias, biases_from_masses, masses)
+	return np.interp(inputbias, biases_from_masses, np.log10(masses))
 
 
 # take a characteristic halo mass and calculate the resulting average bias over a given redshift distribution
 def mass_to_avg_bias(log_m, zs, dndz, log_merr=None):
 	bh = bias.haloBias(M=10 ** log_m, z=zs, mdef='200c', model='tinker10')
 
-	avg_bh = np.average(bh, weights=dndz)
+	avg_bh = np.trapz(bh*dndz, x=zs)
 	if log_merr is not None:
 		bh_plus = bias.haloBias(M=10 ** (log_m+log_merr[0]), z=zs, mdef='200c', model='tinker10')
 		bh_minus = bias.haloBias(M=10 ** (log_m-log_merr[1]), z=zs, mdef='200c', model='tinker10')
@@ -28,11 +28,31 @@ def mass_to_avg_bias(log_m, zs, dndz, log_merr=None):
 	return avg_bh
 
 
+def combine_biases():
+
+	lens_results = np.load('results/lensing_xcorrs/bias/catwise.npy', allow_pickle=True)
+
+	clustering_results = np.load('results/clustering/bias/catwise.npy', allow_pickle=True)
+
+	medcolors, lensbias, lensbias_err = lens_results[0], lens_results[1], lens_results[2]
+	medcolors, cfbias, cfbias_err = clustering_results[0], clustering_results[1], clustering_results[2]
+
+	b, berr = [], []
+
+	for j in range(len(cfbias)):
+		b.append(np.average([lensbias[j], cfbias[j]],
+		                     weights=[1/np.square(lensbias_err[j]), 1/np.square(cfbias_err[j])]))
+		# this is wrong
+		berr.append(np.sqrt(np.square(cfbias_err[j])+np.square(lensbias_err[j])) / 2.)
+	return b, berr
+
+
+
 # take a bias measured over a redshift distribution and calculate which characteristic halo mass would
 # result in the measured bias
 def avg_bias_to_mass(input_bias, zs, dndz, berr=0):
 
-	masses = np.logspace(10, 16, 1000)
+	masses = np.log10(np.logspace(10, 16, 500))
 	b_avg = []
 	for mass in masses:
 		b_avg.append(mass_to_avg_bias(mass, zs, dndz))
@@ -40,7 +60,8 @@ def avg_bias_to_mass(input_bias, zs, dndz, berr=0):
 	if berr > 0:
 		upmass = np.interp(input_bias+berr, b_avg, masses)
 		lomass = np.interp(input_bias-berr, b_avg, masses)
-		return np.interp(input_bias, b_avg, masses), lomass, upmass
+		mass = np.interp(input_bias, b_avg, masses)
+		return mass, mass-lomass, upmass-mass
 	else:
 		return np.interp(input_bias, b_avg, masses)
 
@@ -120,3 +141,14 @@ def bias_and_masses(refsample, caps='both'):
 			upmass.append(mass[2])
 
 		return avg_bias, avg_err, charmass, lomass, upmass
+
+
+
+def mixed_sample_bias(b1, b2, b1_frac):
+	return np.square(np.average([np.sqrt(b1), np.sqrt(b2)], weights=[b1_frac, (1 - b1_frac)]))
+
+def galaxy_obscured_bias(unobscured_bias, obscured_bias, torus_obscured_fraction, unobscured_bias_err=0,
+                         obscured_bias_err=0):
+	possible_b2s = np.linspace(unobscured_bias, 10, 100)
+	avg_bs = mixed_sample_bias(unobscured_bias, possible_b2s, torus_obscured_fraction)
+	print(avg_bs[np.abs(obscured_bias - avg_bs).argmin()])

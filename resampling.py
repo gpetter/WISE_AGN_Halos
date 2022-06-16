@@ -1,11 +1,9 @@
 import numpy as np
 import healpy as hp
-import healpixhelper
-import importlib
 from scipy import stats
-from astropy.io import fits
-from astropy.table import Table
-importlib.reload(healpixhelper)
+from source import organization
+organizer = organization.Organizer()
+
 
 
 def montecarlo_spearman(xs, ys, yerrs):
@@ -83,7 +81,7 @@ def bin_on_sky(ras, decs, njackknives, nside=None):
 	blankmap[uniquepix] = labels
 	hp.mollview(blankmap, cmap=plt.cm.nipy_spectral)
 	# plt.axis([360, 0, -21, 36])
-	plt.savefig('plots/jackknives.pdf')
+	plt.savefig(organizer.plotdir + 'jackknives.pdf')
 	plt.close('all')
 	return blankmap
 

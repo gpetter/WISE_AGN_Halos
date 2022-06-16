@@ -8,18 +8,15 @@ from colossus.cosmology import cosmology
 from colossus.lss import bias
 from scipy.special import j0
 from scipy.optimize import curve_fit
-from astropy.io import fits
-import pymaster as nmt
+import hod_model
+import hm_calcs
+
 import fitting
 from functools import partial
-import importlib
-import redshift_dists
+
 from source import bias_tools
-import clusteringModel
-importlib.reload(clusteringModel)
-importlib.reload(redshift_dists)
-importlib.reload(bias_tools)
-importlib.reload(fitting)
+import astropy.cosmology.units as cu
+
 
 cosmo = cosmology.setCosmology('planck18')
 apcosmo = cosmo.toAstropy()
@@ -29,7 +26,7 @@ apcosmo = cosmo.toAstropy()
 def sigma_crit(z):
 	return ((const.c ** 2) / (4. * np.pi * const.G) * (apcosmo.angular_diameter_distance(1100.) / (
 		(apcosmo.angular_diameter_distance(z) * apcosmo.angular_diameter_distance_z1z2(z, 1100.))))).decompose().to(
-		u.solMass * u.littleh / u.kpc ** 2, u.with_H0(apcosmo.H0))
+		u.solMass * u.littleh / u.kpc ** 2, cu.with_H0(apcosmo.H0))
 
 
 # calculate the concentration of a halo given a mass and redshift using the Ludlow+16 model
@@ -48,7 +45,7 @@ def nfw_sigma(theta, m_200, z):
 	# define a NFW profile in terms of the halo mass and concentration parameter c_200
 	p_nfw = profile_nfw.NFWProfile(M=m_200, c=calc_concentration(m_200, z), z=z, mdef='200c')
 	# angular diameter distance
-	d_a = apcosmo.angular_diameter_distance(z).to(u.kpc/u.littleh, u.with_H0(apcosmo.H0)).value
+	d_a = apcosmo.angular_diameter_distance(z).to(u.kpc/u.littleh, cu.with_H0(apcosmo.H0)).value
 	return p_nfw.surfaceDensity(r=theta*d_a)
 
 
@@ -69,7 +66,7 @@ def kappa_1_halo(theta, mass_or_bias, z, mode='mass'):
 # estimate lensing convergence due to correlated large scale structure to a DM halo of a given mass
 def two_halo_term(theta, mass_or_bias, z, mode='mass'):
 
-	d_a = apcosmo.angular_diameter_distance(z).to(u.kpc/u.littleh, u.with_H0(apcosmo.H0))     # kpc/h
+	d_a = apcosmo.angular_diameter_distance(z).to(u.kpc/u.littleh, cu.with_H0(apcosmo.H0))     # kpc/h
 
 	if mode == 'mass':
 		# calculate halo bias through Tinker+10 model
@@ -87,7 +84,7 @@ def two_halo_term(theta, mass_or_bias, z, mode='mass'):
 
 	# scales
 	ks = np.logspace(-5, 0, 200)*u.littleh/u.Mpc
-	ls = ks*(1+z)*(apcosmo.angular_diameter_distance(z).to(u.Mpc/u.littleh, u.with_H0(apcosmo.H0)))
+	ls = ks*(1+z)*(apcosmo.angular_diameter_distance(z).to(u.Mpc/u.littleh, cu.with_H0(apcosmo.H0)))
 
 	# do an outer product of the thetas and ls for integration
 	ltheta = np.outer(theta, ls)
@@ -193,38 +190,7 @@ def filtered_model_in_bins(zdist, obs_thetas, mass_or_bias, binsize=12, reso=1.5
 	return profile
 
 
-# used Liu et al. 2015 (Cross-correlation of Planck CMB lensing ...)
-# return lensing kernel for CMB (if no source redshifts provided
-# or lensing kernel for galaxy weak lensing if source redshifts are provided
-def lensing_kernel(lens_zs, source_zs=None):
-	prefactor = 3. / 2. * apcosmo.Om0 * ((apcosmo.H0/const.c) ** 2) * (1 + lens_zs) * \
-	            apcosmo.comoving_distance(lens_zs)
 
-	if source_zs is None:
-		wk = prefactor * (apcosmo.comoving_distance(1100)-apcosmo.comoving_distance(
-			lens_zs)) / apcosmo.comoving_distance(1100)
-	else:
-
-		source_dist = np.histogram(source_zs, 200, density=True)
-		dndz, source_bins = source_dist[0], source_dist[1]
-		source_bin_centers = (source_bins[1:] + source_bins[:-1])/2
-
-		integrals = []
-		for lens_z in lens_zs:
-			idxs = np.where(source_bin_centers > lens_z)
-
-			if len(idxs[0]) > 1:
-				new_source_zs, new_dndz = source_bin_centers[idxs], dndz[idxs]
-				integrand = new_dndz * (apcosmo.comoving_distance(new_source_zs) - apcosmo.comoving_distance(lens_z))\
-				            / apcosmo.comoving_distance(new_source_zs)
-
-				integrals.append(np.trapz(integrand, new_source_zs))
-			else:
-				integrals.append(0)
-		wk = prefactor * np.array(integrals)
-
-
-	return wk
 
 def dx_dz_lensing_kernel(lens_zs, source_zs=None):
 	return const.c / apcosmo.H(lens_zs) * lensing_kernel(lens_zs, source_zs)
@@ -235,15 +201,18 @@ def dm_halo_kernel(lens_zs, dndz, b_of_z):
 	return b_of_z * apcosmo.H(lens_zs) / const.c * dndz
 
 
-def x_power_spectrum(ls, zs, dndz, log_eff_mass=None):
+"""def x_power_spectrum(ls, zs, dndz, log_eff_mass=None, hod_params=None, hodmodel=None):
 	kmax = 1000
 	k_grid = (np.logspace(-5, np.log10(kmax), 1000) * (u.littleh / u.Mpc))
 
 	lenskern = lensing_kernel(zs)
 	if log_eff_mass is not None:
 		b_of_z = bias.haloBias(M=10**log_eff_mass, z=zs, mdef='200c', model='tinker10')
+
 	else:
 		b_of_z = np.ones(len(zs))
+
+
 	qsokern = dm_halo_kernel(zs, dndz, b_of_z)
 
 	integrand = const.c * lenskern * qsokern / ((apcosmo.comoving_distance(zs) ** 2) * apcosmo.H(zs))
@@ -252,9 +221,19 @@ def x_power_spectrum(ls, zs, dndz, log_eff_mass=None):
 
 
 	ps_at_ks = []
-	for j in range(len(zs)):
-		pk_z = cosmo.matterPowerSpectrum(k_grid.value, z=zs[j])
-		ps_at_ks.append(np.interp(ks[j], k_grid.value, pk_z))
+
+	if hodmodel is None:
+		for j in range(len(zs)):
+			pk_z = cosmo.matterPowerSpectrum(k_grid.value, z=zs[j])
+			ps_at_ks.append(np.interp(ks[j], k_grid.value, pk_z))
+	else:
+		pk_1h_zs, pk_2h_zs = hod_model.power_spectra_for_zs(zs, hod_params, hodmodel)
+		pk_zs = np.array(pk_1h_zs) + np.array(pk_2h_zs)
+
+		for j in range(len(zs)):
+			ps_at_ks.append(np.interp(ks[j], k_grid.value, pk_zs[j]))
+
+
 	ps_at_ks = np.array(ps_at_ks) * (u.Mpc / u.littleh) ** 3
 
 
@@ -262,16 +241,23 @@ def x_power_spectrum(ls, zs, dndz, log_eff_mass=None):
 
 	integral = np.trapz(integrand, zs, axis=0)
 
-	return integral.to(u.dimensionless_unscaled, u.with_H0(apcosmo.H0))
+	return integral.to(u.dimensionless_unscaled, cu.with_H0(apcosmo.H0))"""
+
+def x_power_spectrum(ls, zs, dndz, hmobj, log_eff_mass=None, hod_params=None, hodmodel=None):
+	hmobj.set_powspec(hodparams=hod_params, modeltype=hodmodel, log_meff=log_eff_mass)
+	return hmobj.get_c_ell_kg(dndz=(zs, dndz), ls=ls)
+
+
 
 
 	
-def binned_x_power_spectrum(zs, dndz, log_eff_mass=None):
-	xpower = x_power_spectrum(np.arange(2048)+1, zs, dndz, log_eff_mass=log_eff_mass)
+def binned_x_power_spectrum(zs, dndz, hmobj, log_eff_mass=None):
+	import pymaster as nmt
+	xpower = x_power_spectrum(np.arange(2048)+1, zs, dndz, hmobj, log_eff_mass=log_eff_mass)
 
 
 	wsp = nmt.NmtWorkspace()
-	wsp.read_from('masks/workspace.fits')
+	wsp.read_from('masks/namaster/planck_workspace.fits')
 
 	binned_xpow = wsp.decouple_cell(wsp.couple_cell([xpower]))
 	return binned_xpow[0]
@@ -279,9 +265,9 @@ def binned_x_power_spectrum(zs, dndz, log_eff_mass=None):
 def biased_binned_x_power_spectrum(foo, b, zs, dndz):
 	return b * binned_x_power_spectrum(zs, dndz)
 
-def mass_biased_x_power_spectrum(foo, log_m, zs, dndz):
+def mass_biased_x_power_spectrum(foo, log_m, zs, dndz, hmobj):
 	#b = bias_tools.mass_to_avg_bias(m, zs, dndz)
-	return binned_x_power_spectrum(zs, dndz, log_eff_mass=log_m)
+	return binned_x_power_spectrum(zs, dndz, hmobj, log_eff_mass=log_m)
 
 def fit_bias(data, errs, zs, dndz):
 	partialfun = partial(biased_binned_x_power_spectrum, zs=zs, dndz=dndz)
@@ -290,7 +276,8 @@ def fit_bias(data, errs, zs, dndz):
 	return popt[0], np.sqrt(pcov)[0][0]
 
 def fit_mass(data, errs, zs, dndz):
-	partialfun = partial(mass_biased_x_power_spectrum, zs=zs, dndz=dndz)
+	hmobj = hm_calcs.halomodel(zs=zs)
+	partialfun = partial(mass_biased_x_power_spectrum, zs=zs, dndz=dndz, hmobj=hmobj)
 	popt, pcov = curve_fit(partialfun, np.ones(len(data)), data, sigma=errs, absolute_sigma=True, bounds=[11, 14])
 	return popt[0], np.sqrt(pcov)[0][0]
 
@@ -309,4 +296,44 @@ def kappa_mass_relation(zdist, eval_kappas):
 	polycoeffs = np.polyfit(kappas, logmasses, 2)
 	return np.polyval(polycoeffs, eval_kappas)
 
+
+
+# function taking 3 HOD parameters and returning angular CF. Used for initial least squares fit to give MCMC a good
+# starting point
+def three_param_hod_c_ell(thetabins, m_min, alpha, m_1, zs, dn_dz_1):
+	halomod_obj = hm_calcs.halomodel(zs=zs)
+	halomod_obj.set_powspec(hodparams=[m_min, alpha, m_1], modeltype='3param')
+	return halomod_obj.get_binned_c_ell_kg(dndz=[zs, dn_dz_1], ls=(1+np.arange(3000)))
+# function taking 2 HOD parameters and returning angular CF. Used for initial least squares fit to give MCMC a good
+# starting point
+def two_param_hod_c_ell(thetabins, m_min, alpha, zs, dn_dz_1):
+	halomod_obj = hm_calcs.halomodel(zs=zs)
+	halomod_obj.set_powspec(hodparams=[m_min, alpha], modeltype='2param')
+	return halomod_obj.get_binned_c_ell_kg(dndz=[zs, dn_dz_1], ls=(1+np.arange(3000)))
+
+# function taking 2 HOD parameters and returning angular CF. Used for initial least squares fit to give MCMC a good
+# starting point
+def one_param_hod_c_ell(thetabins, m_min, zs, dn_dz_1):
+	halomod_obj = hm_calcs.halomodel(zs=zs)
+	halomod_obj.set_powspec(hodparams=[m_min], modeltype='1param')
+	return halomod_obj.get_binned_c_ell_kg(dndz=[zs, dn_dz_1], ls=(1+np.arange(3000)))
+
+
+# fitting CF with HOD model with least squares to give initial guess before running MCMC
+def initial_hod_fit(theta_data, pow_data, pow_errs, zs, dn_dz, hodmodel):
+	if hodmodel == '3param':
+		partialfun = partial(three_param_hod_c_ell, zs=zs, dn_dz_1=dn_dz)
+		bounds = ([11., 0., 11.5], [15., 2., 15.])
+	elif hodmodel == '2param':
+		partialfun = partial(two_param_hod_c_ell, zs=zs, dn_dz_1=dn_dz)
+		bounds = ([11., 0.], [15., 2.])
+	elif hodmodel == '1param':
+		partialfun = partial(one_param_hod_c_ell, zs=zs, dn_dz_1=dn_dz)
+		bounds = ([11.], [15.])
+	else:
+		return 'error'
+
+	popt, pcov = curve_fit(partialfun, theta_data, pow_data, sigma=pow_errs, absolute_sigma=True, bounds=bounds)
+
+	return popt, np.sqrt(np.diag(pcov))
 

@@ -5,6 +5,7 @@ from scipy.optimize import curve_fit
 from scipy import stats
 cosmo = cosmology.setCosmology('planck18')
 apcosmo = cosmo.toAstropy()
+import astropy.cosmology.units as cu
 
 import camb
 from functools import partial
@@ -14,6 +15,7 @@ import astropy.units as u
 from source import bias_tools
 from source import interpolate_tools
 import hod_model
+import hm_calcs
 
 
 # define k space (includes little h)
@@ -111,7 +113,7 @@ def angular_corr_func(thetas, zs, dn_dz_1, dn_dz_2=None, hodparams=None, hodmode
 	interped_dipomp = np.array(interped_dipomp)
 
 	# convert H(z)/c from 1/Mpc to h/Mpc in order to cancel units of k
-	dz_d_chi = (apcosmo.H(zs) / const.c).to(u.littleh / u.Mpc, u.with_H0(apcosmo.H0)).value
+	dz_d_chi = (apcosmo.H(zs) / const.c).to(u.littleh / u.Mpc, cu.with_H0(apcosmo.H0)).value
 	# product of redshift distributions, and dz/dchi
 	differentials = dz_d_chi * dn_dz_1 * dn_dz_2
 
@@ -167,21 +169,22 @@ def fit_bias(theta_data, w_data, w_errs, zs, dn_dz, mode='bias'):
 # function taking 3 HOD parameters and returning angular CF. Used for initial least squares fit to give MCMC a good
 # starting point
 def three_param_hod_ang_cf(thetabins, m_min, alpha, m_1, zs, dn_dz_1):
-	return angular_corr_func_in_bins(thetabins=thetabins, zs=zs, dn_dz_1=dn_dz_1,
-	                                 hodparams=[m_min, alpha, m_1],
-	                                 hodmodel='3param')
+	halomod_obj = hm_calcs.halomodel(zs=zs)
+	halomod_obj.set_powspec(hodparams=[m_min, alpha, m_1], modeltype='3param')
+	return halomod_obj.get_binned_ang_cf(dndz=[zs, dn_dz_1], theta_bins=thetabins)
 # function taking 2 HOD parameters and returning angular CF. Used for initial least squares fit to give MCMC a good
 # starting point
 def two_param_hod_ang_cf(thetabins, m_min, alpha, zs, dn_dz_1):
-	return angular_corr_func_in_bins(thetabins=thetabins, zs=zs, dn_dz_1=dn_dz_1,
-	                                 hodparams=[m_min, alpha],
-	                                 hodmodel='2param')
+	halomod_obj = hm_calcs.halomodel(zs=zs)
+	halomod_obj.set_powspec(hodparams=[m_min, alpha], modeltype='2param')
+	return halomod_obj.get_binned_ang_cf(dndz=[zs, dn_dz_1], theta_bins=thetabins)
 
 # function taking 2 HOD parameters and returning angular CF. Used for initial least squares fit to give MCMC a good
 # starting point
 def one_param_hod_ang_cf(thetabins, m_min, zs, dn_dz_1):
-	return angular_corr_func_in_bins(thetabins=thetabins, zs=zs, dn_dz_1=dn_dz_1, hodparams=[m_min],
-	                                 hodmodel='1param')
+	halomod_obj = hm_calcs.halomodel(zs=zs)
+	halomod_obj.set_powspec(hodparams=[m_min], modeltype='1param')
+	return halomod_obj.get_binned_ang_cf(dndz=[zs, dn_dz_1], theta_bins=thetabins)
 
 
 # fitting CF with HOD model with least squares to give initial guess before running MCMC
@@ -203,4 +206,8 @@ def initial_hod_fit(theta_data, w_data, w_errs, zs, dn_dz, hodmodel):
 	return popt, np.sqrt(np.diag(pcov))
 
 
+# assume that a fraction f of obscured quasars are just Type1 QSOs edge on, and assume a bias for the galaxy-obscured
+# objects, then calculate the effective bias of a mixed sample
+def bias_with_torus_fraction(b_qso2, torus_fraction):
+	h=1
 

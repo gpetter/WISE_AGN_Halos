@@ -32,7 +32,7 @@ def get_qsos_outside_mask(nsides, themap, ras, decs):
 
 # AzimuthalProj.projmap requires a vec2pix function for some reason, so define one where the nsides are fixed
 def newvec2pix(x, y, z):
-	return hp.vec2pix(nside=2048, x=x, y=y, z=z)
+	return hp.vec2pix(nside=4096, x=x, y=y, z=z)
 
 
 # perform one iteration of a stack

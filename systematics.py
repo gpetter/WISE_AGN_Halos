@@ -360,6 +360,7 @@ def elat_and_depth_weights(ncoordbins):
 
 
 
+
 def smoothed_density(catname, nside):
 	cat = Table.read('catalogs/derived/%s_binned.fits' % catname)
 	#randcat = Table.read('catalogs/derived/ls_randoms_1_filtered.fits')

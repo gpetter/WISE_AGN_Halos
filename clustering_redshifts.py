@@ -191,8 +191,8 @@ def combine_lss_catalogs(n_randoms_to_n_data=10, nside_mask=256, remove_redshift
 	boss_qso_data.write('../data/lss/Combined/BOSS_QSO.fits', format='fits', overwrite=True)
 	boss_qso_randoms.write('../data/lss/Combined/BOSS_QSO_randoms.fits', format='fits', overwrite=True)
 
-	combined_hpx_map = lowz_hpx_map * cmass_hpx_map * eboss_qso_hpx_map * lrg_hpx_map * boss_qso_hpx_map
-	hp.write_map('../data/lss/Combined/all_hpx_map.fits', combined_hpx_map, overwrite=True)
+	#combined_hpx_map = lowz_hpx_map * cmass_hpx_map * eboss_qso_hpx_map * lrg_hpx_map * boss_qso_hpx_map
+	#hp.write_map('../data/lss/Combined/all_hpx_map.fits', combined_hpx_map, overwrite=True)
 
 
 
@@ -204,11 +204,12 @@ def combine_lss_catalogs(n_randoms_to_n_data=10, nside_mask=256, remove_redshift
 	del lowz_data, cmass_data, eboss_qso_data, lrg_data, boss_qso_data
 	fullrandoms = vstack([lowz_randoms, cmass_randoms, eboss_qso_randoms, lrg_randoms, boss_qso_randoms])
 	del lowz_randoms, cmass_randoms, eboss_qso_randoms, lrg_randoms
-	fulldata = fulldata[np.where(combined_hpx_map[hp.ang2pix(nside=nside_mask, theta=fulldata['RA'], phi=fulldata['DEC'],
-	                                                         lonlat=True)] > 0)]
+	#fulldata = fulldata[np.where(combined_hpx_map[hp.ang2pix(nside=nside_mask, theta=fulldata['RA'], phi=fulldata[
+	# 'DEC'],
+	#                                                         lonlat=True)] > 0)]
 	#fulldata = masking.mask_tab(fulldata)
-	fullrandoms = fullrandoms[np.where(combined_hpx_map[hp.ang2pix(nside=nside_mask, theta=fullrandoms['RA'],
-	                                                               phi=fullrandoms['DEC'], lonlat=True)] > 0)]
+	#fullrandoms = fullrandoms[np.where(combined_hpx_map[hp.ang2pix(nside=nside_mask, theta=fullrandoms['RA'],
+	#                                                               phi=fullrandoms['DEC'], lonlat=True)] > 0)]
 	#fullrandoms = masking.mask_tab(fullrandoms)
 	fulldata.write('../data/lss/Combined/all.fits', format='fits', overwrite=True)
 	fullrandoms.write('../data/lss/Combined/all_randoms.fits', format='fits', overwrite=True)
@@ -217,17 +218,20 @@ def combine_lss_catalogs(n_randoms_to_n_data=10, nside_mask=256, remove_redshift
 
 
 	wise_agn_cat = Table.read('catalogs/derived/catwise_binned.fits')
-	wise_agn_cat = wise_agn_cat[np.where(combined_hpx_map[hp.ang2pix(nside=nside_mask,
-	                                    theta=wise_agn_cat['RA'], phi=wise_agn_cat['DEC'], lonlat=True)] > 0)]
+	#wise_agn_cat = wise_agn_cat[np.where(combined_hpx_map[hp.ang2pix(nside=nside_mask,
+	#                                    theta=wise_agn_cat['RA'], phi=wise_agn_cat['DEC'], lonlat=True)] > 0)]
 	wise_agn_cat['WEIGHT'] = np.ones(len(wise_agn_cat))
 	wise_agn_cat = wise_agn_cat['RA', 'DEC', 'WEIGHT', 'bin']
 	wise_agn_cat.write('../data/lss/Combined/wise_agn.fits', format='fits', overwrite=True)
 
 	wise_random_files = glob.glob('catalogs/derived/catwise_randoms_*')
 	for j, filename in enumerate(wise_random_files):
+		binsize = len(wise_agn_cat[np.where(wise_agn_cat['bin'] == (j+1))])
 		randtab = Table.read(filename)
-		randtab = randtab[np.where(combined_hpx_map[hp.ang2pix(nside=nside_mask,
-	                                    theta=randtab['RA'], phi=randtab['DEC'], lonlat=True)] > 0)]
+		randtab = randtab[:n_randoms_to_n_data * binsize]
+
+		#randtab = randtab[np.where(combined_hpx_map[hp.ang2pix(nside=nside_mask,
+	    #                                theta=randtab['RA'], phi=randtab['DEC'], lonlat=True)] > 0)]
 		randtab['WEIGHT'] = np.ones(len(randtab))
 		randtab = randtab['RA', 'DEC', 'WEIGHT']
 		randtab.write('../data/lss/Combined/wise_randoms_%s.fits' % (j+1), format='fits', overwrite=True)
@@ -364,35 +368,44 @@ def krolewski_bias(sample, z_inputs):
 
 
 
-def menard_ideal_estimator(zbins, ntheta_bins, minscale=0.5, maxscale=10, ls=True):
+def menard_ideal_estimator(zbins, ntheta_bins, minscale=0.5, maxscale=10., ls=True):
 	specz_table = Table.read('../data/lss/Combined/all.fits')
 	specz_randoms = Table.read('../data/lss/Combined/all_randoms.fits')
 
-	physical_scales = np.logspace(np.log10(minscale), np.log10(maxscale), ntheta_bins)
 
 	wise_agntab = Table.read('../data/lss/Combined/wise_agn.fits')
 	zcenters = interpolate_tools.bin_centers(zbins, method='mean')
 
 	import matplotlib.pyplot as plt
-	for j in range(2):
+	for j in range(int(np.max(wise_agntab['bin']))):
 		dndz, uperrs, lowerrs = [], [], []
 		binagntab = wise_agntab[np.where(wise_agntab['bin'] == (j+1))]
+		#binagntab = Table.read('../data/lss/Combined/wise_randoms_%s.fits' % (j + 1))
+		#binagntab = binagntab[:int(len(binagntab) / 10)]
+
 		for k in range(len(zbins)-1):
 			zmin, zmax = zbins[k], zbins[k + 1]
 
-			ang_diam_dist = cosmo.angularDiameterDistance(zcenters[k])
-			thetas_at_z = physical_scales / ang_diam_dist * 180. / np.pi    # degrees
+			ang_diam_dist = np.float(cosmo.angularDiameterDistance(zcenters[k]))
+
+			min_theta_at_z = minscale / ang_diam_dist * 180. / np.pi    # degrees
+
+			max_theta_at_z = maxscale / ang_diam_dist * 180. / np.pi    # degrees
+			thetas_at_z = np.logspace(np.log10(min_theta_at_z), np.log10(max_theta_at_z), ntheta_bins)
+
 
 			# don't consider very small scales < 15 arcsec
-			thetas_at_z = thetas_at_z[np.where(thetas_at_z * 3600. > 15.)]
+			if min_theta_at_z * 3600. < 6.:
+				print('probing scale %s arcsec, within WISE PSF, beware' % (min_theta_at_z * 3600.))
 
 
-			agnrandtab = Table.read('../data/lss/Combined/wise_randoms_%s.fits' % (j+1))
+
 
 			zbinspectab = specz_table[np.where((specz_table['Z'] > zmin) & (specz_table['Z'] <= zmax))]
 			rand_zbinspectab = specz_randoms[np.where((specz_randoms['Z'] > zmin) & (specz_randoms['Z'] <= zmax))]
 
 			if ls:
+				agnrandtab = Table.read('../data/lss/Combined/wise_randoms_%s.fits' % (j + 1))
 				refrandras, refranddecs, refrandweights = agnrandtab['RA'], agnrandtab['DEC'], agnrandtab['WEIGHT']
 			else:
 				refrandras, refranddecs, refrandweights = None, None, None
@@ -402,14 +415,14 @@ def menard_ideal_estimator(zbins, ntheta_bins, minscale=0.5, maxscale=10, ls=Tru
 			w_sp, werr_sp = twoPointCFs.ang_cross_corr_from_coords(refras=binagntab['RA'], refdecs=binagntab['DEC'],
 			                                              ras=zbinspectab['RA'], decs=zbinspectab['DEC'],
 			                                              refrandras=refrandras, refranddecs=refranddecs,
-			                                              minscale=np.min(thetas_at_z), maxscale=np.max(thetas_at_z),
+			                                              minscale=min_theta_at_z, maxscale=max_theta_at_z,
 			                                              randras=rand_zbinspectab['RA'],
 			                                              randdecs=rand_zbinspectab['DEC'],
 			                                              refweights=binagntab['WEIGHT'],
 			                                              weights=zbinspectab['WEIGHT'],
 			                                              refrandweights=refrandweights,
 			                                              randweights=rand_zbinspectab['WEIGHT'],
-			                                              nbins=len(thetas_at_z))
+			                                              nbins=ntheta_bins)
 
 
 
@@ -425,7 +438,7 @@ def menard_ideal_estimator(zbins, ntheta_bins, minscale=0.5, maxscale=10, ls=Tru
 			plt.yscale('log')
 			plt.ylim(1e-4, 1e-1)
 
-			plt.savefig('plots/clustering_redshifts/each_xcorr/%s_%s.pdf' % (j + 1, k))
+			plt.savefig('plots/clustering_redshifts/each_xcorr/%s/%s_%s.pdf' % (j+1, j + 1, k))
 
 			plt.close('all')
 
@@ -451,6 +464,9 @@ def menard_ideal_estimator(zbins, ntheta_bins, minscale=0.5, maxscale=10, ls=Tru
 
 			dndz.append(integrated_w / bias_factor), uperrs.append(upper_integrated_w / bias_factor)
 			lowerrs.append(lower_integrated_w / bias_factor)
+
+		dndz = 1 / np.trapz(np.array(dndz), x=np.array(zcenters)) * np.array(dndz)
+		np.array([zcenters, dndz]).dump('redshifts/clustering/%s.npy' % (j+1))
 		plt.close('all')
 		plt.figure(figsize=(8,7))
 		plt.scatter(zcenters, dndz)
@@ -459,6 +475,5 @@ def menard_ideal_estimator(zbins, ntheta_bins, minscale=0.5, maxscale=10, ls=Tru
 		plt.savefig('plots/clustering_redshifts/%s.pdf' % (j+1))
 		plt.close('all')
 
-
-menard_ideal_estimator(np.linspace(0.1, 3.5, 25), 5, ls=False)
 #combine_lss_catalogs(remove_redshift_outliers=True)
+menard_ideal_estimator(np.linspace(1, 3.5, 25), 20, minscale=0.05, maxscale=2.5, ls=True)

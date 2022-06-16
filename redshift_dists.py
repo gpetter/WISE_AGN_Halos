@@ -2,36 +2,15 @@ from astropy.io import fits
 import numpy as np
 import astropy.units as u
 from astropy.coordinates import SkyCoord
-from astropy.table import Table
+from astropy.table import Table, vstack
 import healpy as hp
 import glob
+from source import interpolate_tools
 
-
-def get_redshifts(binnedtab, seplimit=2.5*u.arcsec, sample='bootes'):
+"""def get_redshifts(binnedtab, seplimit=2.5*u.arcsec, sample='bootes'):
 	from colossus.cosmology import cosmology
 	cosmo = cosmology.setCosmology('planck18')
-	"""if sample == 'bootes':
-			tab = tab[np.where((tab['DEC'] < 35.85) & (tab['RA'] > 216.15) & (tab['RA'] < 219.7) &
-			                (((tab['DEC'] > 32.3) & (tab['RA'] < 218.25)) | ((tab['DEC'] > 32.9) &
-			                (tab['RA'] >= 218.25) & (tab['RA'] < 218.95)) | ((tab['DEC'] >
-			                33.5) & (tab['RA'] > 218.95))))]
-			ztab = Table.read('catalogs/redshifts/bootes_lofar/LOFAR_Bootes_photo_zs.fits')
-			coords = SkyCoord(tab['RA'] * u.deg, tab['DEC'] * u.deg)
-			zcoords = SkyCoord(ztab['RA'] * u.deg, ztab['DEC'] * u.deg)
 
-			idx, d2d, d3d = coords.match_to_catalog_sky(zcoords)
-			ztab = ztab[idx]
-			sep_constraint = d2d < seplimit
-			ztab = ztab[sep_constraint]
-			ztab = ztab[np.where(ztab['zbest'] > 0)]
-
-			return len(ztab)/len(tab), np.array(ztab['zbest'])
-		elif sample == 'cosmos':
-			tabbin = tab['bin'][0]
-			ztab = Table.read('catalogs/derived/catwise_r90_cosmos_zs.fits')
-			binztab = ztab[np.where(ztab['bin'] == tabbin)]
-
-			return 1, np.array(binztab['Z'])"""
 
 	ages_footprint = hp.read_map('catalogs/redshifts/AGES/ages_footprint.fits')
 	# restrict table to only sources falling in the BOOTES field where AGES took spectra
@@ -53,7 +32,7 @@ def get_redshifts(binnedtab, seplimit=2.5*u.arcsec, sample='bootes'):
 		z_out = np.array(ages_tab['z1'])
 	# if not, go to smaller, deeper cosmos field for redshifts
 	else:
-		print('Bin %s: AGES completeness is %s, reverting to COSMOS' % (binnedtab['bin'][0], z_frac))
+		print('AGES completeness is %s, reverting to COSMOS' % (z_frac))
 		cosmosbinnedtab = binnedtab[np.where((binnedtab['RA'] > 149) & (binnedtab['RA'] < 153) &
 		                        (binnedtab['DEC'] > -1) & (binnedtab['DEC'] < 4))]
 		cosmosbinnedcoords = SkyCoord(cosmosbinnedtab['RA'] * u.deg, cosmosbinnedtab['DEC'] * u.deg)
@@ -72,30 +51,49 @@ def get_redshifts(binnedtab, seplimit=2.5*u.arcsec, sample='bootes'):
 	cmdists = cosmo.comovingDistance(np.zeros(len(z_out)), z_out)
 	print('Simon+07 says: Limber equation accurate to %s deg' % (260. / 60. * np.std(cmdists) / np.mean(cmdists)))
 
-	return z_frac, z_out
+	return z_frac, z_out"""
+
+
+
+
+
+def get_redshifts(bin, zthresh=4):
+	from colossus.cosmology import cosmology
+	cosmo = cosmology.setCosmology('planck18')
+
+	ztab = Table.read('catalogs/derived/catwise_hasz.fits')
+	ztab = ztab[np.where(ztab['bin'] == bin)]
+
+	bootes_footprint = hp.read_map('masks/redshift_masks/bootes.fits')
+	# restrict table to only sources falling in the BOOTES field where AGES took spectra
+	tab_in_bootes = ztab[np.where(bootes_footprint[hp.ang2pix(hp.npix2nside(len(bootes_footprint)), ztab['RA'],
+	                                                         ztab['DEC'], lonlat=True)] > 0)]
+
+	cosmos_footprint = hp.read_map('masks/redshift_masks/cosmos.fits')
+	tab_in_cosmos = ztab[np.where(cosmos_footprint[hp.ang2pix(hp.npix2nside(len(cosmos_footprint)), ztab['RA'],
+	                                                               ztab['DEC'], lonlat=True)] > 0)]
+
+
+	tottab = vstack((tab_in_cosmos, tab_in_bootes))
+
+	zfrac = len(tottab[np.where((tottab['Z'] > 0) & (tottab['Z'] < zthresh))]) / len(tottab)
+	tottab = tottab[np.where((tottab['Z'] > 0) & (tottab['Z'] < zthresh))]
+	allzs = tottab['Z']
+	photzs = tottab['Z'][np.where(tottab['phot_flag'] == 1)]
+	speczs = tottab['Z'][np.where(tottab['phot_flag'] == 0)]
+
+	return zfrac, allzs, speczs, photzs
 
 
 
 
 
 
-
-
-
-
-def redshift_dist(zs, nbins, bin_avgs=True):
-
-	# bin up redshift distribution of sample to integrate kappa over
-	hist = np.histogram(zs, nbins, density=True)
-	zbins = hist[1]
-	if bin_avgs:
-		dz = zbins[1] - zbins[0]
-		# chop off last entry which is a rightmost bound of the z distribution, find center of bins by adding dz/2
-		zbins = np.resize(zbins, zbins.size - 1) + dz / 2
-
-	dndz = hist[0]
-
-	return zbins, dndz
+def dndz_from_z_list(zs, bins):
+	dndz, zbins = np.histogram(zs, bins=bins, density=True)
+	zcenters = interpolate_tools.bin_centers(zbins, method='mean')
+	dndz = dndz / np.trapz(dndz, x=zcenters)
+	return (zcenters, dndz)
 
 
 def redshift_overlap(zs1, zs2, bin_avgs=True):
@@ -125,7 +123,7 @@ def redshift_overlap(zs1, zs2, bin_avgs=True):
 def match_to_spec_surveys(samplename, seplimit):
 	# only match sources inside the cosmos footprint
 	cosmosonly = False
-	tab = Table.read('catalogs/derived/%s_filtered.fits' % samplename)
+	tab = Table.read('catalogs/derived/%s_binned.fits' % samplename)
 	if cosmosonly:
 		# first cut down catalog to rough area of COSMOS to reduce healpix processing time
 		tab = tab[np.where((tab['RA'] > 145) & (tab['RA'] < 155) & (tab['DEC'] > 0) & (tab['DEC'] < 4))]
@@ -190,6 +188,7 @@ def match_to_spec_surveys(samplename, seplimit):
 	for folder in folders:
 		files = glob.glob(folder + '/*.fits')
 		for file in files:
+			print(file)
 			spectab = Table.read(file)
 			if cosmosonly:
 				spectab = spectab[np.where((spectab['RA'] > 145) & (spectab['RA'] < 155) & (spectab['DEC'] > 0) &
@@ -203,7 +202,7 @@ def match_to_spec_surveys(samplename, seplimit):
 				constraint = d2d < seplimit
 
 				maskedtab['Z'][idx[constraint]] = spectab['Zspec'][constraint]
-				# if copying photometric redshift, set flag
+				# if copying spec redshift, set flag
 				maskedtab['phot_flag'][idx[constraint]] = 0
 				maskedtab['z_source'][idx[constraint]] = k
 				k += 1

@@ -1,19 +1,23 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.cm as cm
-import healpy as hp
-import lensingModel
-import importlib
 from astropy.table import Table
 import glob
+import matplotlib as mpl
+from source import organization
+organizer = organization.Organizer()
 
 import plotting_computations
+from matplotlib.ticker import ScalarFormatter
 
-importlib.reload(lensingModel)
+
 #import glob
-import mpl_scatter_density
-import corner
+#import mpl_scatter_density
+
 plt.style.use('science')
+mpl.rcParams['axes.labelsize'] = 30
+mpl.rcParams['xtick.labelsize'] = 15
+mpl.rcParams['ytick.labelsize'] = 15
 
 
 def return_colorscheme(nbins):
@@ -24,6 +28,16 @@ def return_colorscheme(nbins):
 		return colors[:nbins]
 	else:
 		return cm.rainbow(np.linspace(0, 1, nbins))
+
+
+def split_markers(ax, marker, legendlist, markersize=7, alpha=1.):
+	m1, = ax.plot([], [], c='firebrick', marker=marker, markersize=markersize,
+	               fillstyle='right', linestyle='none', markeredgecolor='none', alpha=alpha)
+	m2, = ax.plot([], [], c='royalblue', marker=marker, markersize=markersize,
+	               fillstyle='left', linestyle='none', markeredgecolor='none', alpha=alpha)
+
+
+	legendlist.append((m2, m1))
 
 
 
@@ -50,7 +64,7 @@ def plot_assef_cut(table):
 	plt.xlabel('W2 [mag]', fontsize=20)
 	plt.ylabel('W1 - W2 [mag]', fontsize=20)
 	plt.legend(fontsize=15)
-	plt.savefig('plots/color_cut.pdf')
+	plt.savefig(organizer.plotdir + 'color_cut.pdf')
 	plt.close('all')
 
 
@@ -81,9 +95,9 @@ def plot_color_dists(table, nondet_colors, band1, band2):
 	plt.xlim(-2, 11)
 
 	plt.ylabel('Number', fontsize=20)
-	plt.xlabel('$%s-%s$' % (band1, band2), fontsize=20)
+	plt.xlabel('$%s-%s$ [AB]' % (band1, band2), fontsize=20)
 
-	plt.savefig('plots/color_dists.pdf')
+	plt.savefig(organizer.plotdir + 'color_dists.pdf')
 	plt.close('all')
 
 
@@ -95,7 +109,7 @@ def plot_peakkappa_vs_bin(bin_values, kappas, kappa_errs):
 	plt.ylabel(r'$\langle \kappa \rangle$', fontsize=20)
 	plt.xlabel('Color', fontsize=20)
 
-	plt.savefig('plots/lensing/kappa_v_bin.pdf')
+	plt.savefig(organizer.plotdir + 'lensing/kappa_v_bin.pdf')
 	plt.close('all')
 
 def w3_w4_det_fraction(medcolors, w3_dets, w4_dets):
@@ -110,7 +124,7 @@ def w3_w4_det_fraction(medcolors, w3_dets, w4_dets):
 
 	plt.legend()
 
-	plt.savefig('plots/w3_w4_det_fraction.pdf')
+	plt.savefig(organizer.plotdir + 'w3_w4_det_fraction.pdf')
 	plt.close('all')
 
 def mips_fraction(medcolors, fracs):
@@ -121,7 +135,7 @@ def mips_fraction(medcolors, fracs):
 	plt.ylabel('MIPS Detection Fraction', fontsize=20)
 	plt.xlabel(r'$\langle r - W2 \rangle$', fontsize=20)
 
-	plt.savefig('plots/mips_det_fraction.pdf')
+	plt.savefig(organizer.plotdir + 'mips_det_fraction.pdf')
 	plt.close('all')
 
 
@@ -145,7 +159,7 @@ def w1_w2_dists(tab):
 
 	plt.ylabel('Normalized Frequency', fontsize=20)
 	plt.xlabel('WISE Magnitude', fontsize=20)
-	plt.savefig('plots/w1_w2_dists.pdf')
+	plt.savefig(organizer.plotdir + 'w1_w2_dists.pdf')
 	plt.close('all')
 
 def w3_w4_dists(tab):
@@ -169,7 +183,7 @@ def w3_w4_dists(tab):
 
 	plt.ylabel('Normalized Frequency', fontsize=20)
 	plt.xlabel('WISE Magnitude', fontsize=20)
-	plt.savefig('plots/w3_w4_dists.pdf')
+	plt.savefig(organizer.plotdir + 'w3_w4_dists.pdf')
 	plt.close('all')
 
 def mips_dists(mags):
@@ -183,7 +197,7 @@ def mips_dists(mags):
 
 	plt.ylabel('Normalized Frequency', fontsize=20)
 	plt.xlabel('[24]$_{\mathrm{AB}}$', fontsize=20)
-	plt.savefig('plots/mips_dists.pdf')
+	plt.savefig(organizer.plotdir + 'mips_dists.pdf')
 	plt.close('all')
 
 def fraction_with_redshifts(medcolors, fractions):
@@ -194,23 +208,25 @@ def fraction_with_redshifts(medcolors, fractions):
 	plt.scatter(medcolors, fractions, c=cs)
 	plt.ylabel('Redshift Completeness', fontsize=20)
 	plt.xlabel(r'$\langle r - W2 \rangle$', fontsize=20)
-	plt.savefig('plots/z_fractions.pdf')
+	plt.savefig(organizer.plotdir + 'z_fractions.pdf')
 	plt.close('all')
 
-def redshift_dists(zs_by_bin):
+def redshift_dists(zs_by_bin, zspecs, zphots, clustering_redshifts=False):
 	separate_panels = True
 	if separate_panels:
 		fig, axs = plt.subplots(nrows=len(zs_by_bin), ncols=1, sharex=True, figsize=(8, 6*len(zs_by_bin)))
 	else:
-		plt.figure(figsize=(8,7))
+		fig, ax = plt.subplots(figsize=(8,7))
 
 
 	cs = return_colorscheme(len(zs_by_bin))
 
 	#bin_edges = np.linspace(0., 4., 20)
 	zrange = np.linspace(0, 5, 100)
-	kern = lensingModel.dx_dz_lensing_kernel(zrange)
-	maxkern = np.max(kern)
+	#import lensingModel
+	#kern = lensingModel.dx_dz_lensing_kernel(zrange)
+	#maxkern = np.max(kern)
+
 
 	for j in range(len(zs_by_bin)):
 		if separate_panels:
@@ -218,12 +234,34 @@ def redshift_dists(zs_by_bin):
 				thisax = axs[j]
 			else:
 				thisax = axs
-			thisax.hist(zs_by_bin[j], bins=plotting_computations.freedman_diaconis(zs_by_bin[j]), color=cs[j],
+			fd_bins = plotting_computations.freedman_diaconis(zs_by_bin[j])
+
+
+			zhist, bin_edges = np.histogram(zs_by_bin[j], bins=fd_bins, range=(0, 4))
+			normedzhist, bin_edges = np.histogram(zs_by_bin[j], bins=fd_bins, range=(0, 4), density=True)
+			normratio = (normedzhist / zhist)[0]
+
+
+			thisax.hist(zs_by_bin[j], bins=bin_edges, color=cs[j],
 			            histtype='step',
 			            linestyle='solid',
-			            density=True)
-			thisax.plot(zrange, 1 / maxkern * kern, c='k', ls='--', label=r'Lensing Kernel $\frac{d \chi}{dz} W^{'
-			                                                            r'\kappa}$')
+			            weights=normratio*np.ones(len(zs_by_bin[j])))
+			thisax.hist(zspecs[j], bins=bin_edges, color=cs[j],
+			            histtype='step',
+			            linestyle='dashed',
+			            weights=normratio*np.ones(len(zspecs[j])), label='Spectroscopic')
+			thisax.hist(zphots[j], bins=bin_edges, color=cs[j],
+			            histtype='step',
+			            linestyle='dotted',
+			            weights=normratio*np.ones(len(zphots[j])), label='Photometric')
+			#thisax.plot(zrange, 1 / maxkern * kern, c='k', ls='--', label=r'Lensing Kernel $\frac{d \chi}{dz} W^{'
+			#                                                            r'\kappa}$')
+			if clustering_redshifts:
+				clusterredshiftfile = np.load('redshifts/clustering/%s.npy' % (j+1), allow_pickle=True)
+				redshifts, dndzs = clusterredshiftfile[0], clusterredshiftfile[1]
+				thisax.scatter(redshifts, dndzs, c=cs[j])
+			thisax.legend(fontsize=20)
+
 		else:
 			plt.hist(zs_by_bin[j], bins=bin_edges, color=cs[j], histtype='step', linestyle='solid', density=True)
 			if j == 0:
@@ -231,55 +269,102 @@ def redshift_dists(zs_by_bin):
 				         label=r'Lensing Kernel $\frac{d \chi}{dz} W^{\kappa}$')
 
 
-	plt.legend(fontsize=15)
+	#plt.legend(fontsize=15)
 
 	plt.xlim(0, 4)
+	fig.supylabel('Redshift Distribution $(dn/dz)$', fontsize=20)
 
 	plt.xlabel('Redshift ($z$)', fontsize=20)
-	plt.ylabel('Redshift Distribution $(dn/dz)$', fontsize=20)
-	plt.savefig('plots/z_dists.pdf')
+	plt.subplots_adjust(hspace=0.1)
+	plt.savefig(organizer.plotdir + 'z_dists.pdf')
 	plt.close('all')
 
 def plot_hods(mass_grid, hods):
 	plt.figure(figsize=(8,7))
 	for j in range(len(hods)):
-		plt.plot(mass_grid, hods[j], c=return_colorscheme(len(hods))[j])
+		plt.plot(np.log10(mass_grid), hods[j], c=return_colorscheme(len(hods))[j])
 	plt.ylabel(r'$\langle N \rangle$', fontsize=20)
-	plt.xlabel(r'log$_{10}(M/h^{-1} M_{\odot}$)', fontsize=20)
-	plt.xscale('log')
+	plt.xlabel(r'log$(M_h/h^{-1} M_{\odot})$', fontsize=20)
+
 	plt.yscale('log')
 	plt.ylim(1e-3, 1e3)
-	plt.savefig('plots/HODs.pdf')
+	plt.xlim(10, 15)
+	plt.savefig(organizer.plotdir + 'HODs.pdf')
+	plt.close('all')
+
+
+def plot_hod_variations(mass_grid, nbins, ndim, modeltype, chainlength=50):
+
+	colors = return_colorscheme(nbins)
+	import hod_model
+	plt.close('all')
+	plt.figure(figsize=(8,7))
+	for j in range(nbins):
+
+		chains = np.load('results/chains/%s.npy' % (j+1), allow_pickle=True)
+		hodchainparams = chains[:, :ndim][(len(chains) - chainlength):]
+
+		for k in range(len(hodchainparams)):
+
+			plt.plot(np.log10(mass_grid), hod_model.hod_total(hodchainparams[k], modeltype=modeltype), c=colors[j],
+			         alpha=0.05, rasterized=True)
+
+	plt.ylabel(r'$\langle N \rangle$', fontsize=20)
+	plt.xlabel(r'log$(M_h/h^{-1} M_{\odot})$', fontsize=20)
+
+	plt.yscale('log')
+	plt.ylim(1e-3, 1e3)
+	plt.xlim(10, 15)
+	plt.savefig(organizer.plotdir + 'HOD_scatter.pdf')
 	plt.close('all')
 
 
 
-def plot_ang_autocorrs(samplename):
+
+
+
+
+
+
+
+def plot_ang_autocorrs(samplename, dipomp=False):
+	plt.close('all')
+	plt.figure(figsize=(8, 7))
+
 	scales = np.load('results/clustering/scales.npy', allow_pickle=True)[1:]
 	wthetas, werrs, poissonerrs = [], [], []
 	clusterfiles = sorted(glob.glob('results/clustering/%s_*' % samplename))
+	if dipomp:
+		import pandas as pd
+		unob = pd.read_csv('results/dipomp/unobscured_dipomp_17.csv', names=['theta', 'wtheta'])
+		ob = pd.read_csv('results/dipomp/obscured_dipomp_17.csv', names=['theta', 'wtheta'])
+		plt.scatter(unob['theta'], unob['wtheta'], c='b', alpha=0.1)
+		plt.scatter(ob['theta'], ob['wtheta'], c='r', alpha=0.1)
+
+	labels=['Unobscured', 'Obscured']
+
 	for file in clusterfiles:
 		wfile = np.load(file, allow_pickle=True)
 		wthetas.append(wfile[0])
 		poissonerrs.append(wfile[1])
-		werrs.append(np.std(wfile[2:], axis=0))
-	plt.close('all')
-	plt.figure(figsize=(8,7))
+		#werrs.append(np.std(wfile[2:], axis=0))
+
+
 	cs = return_colorscheme(len(wthetas))
 
-	plt.xlabel(r'$\theta$', fontsize=20)
-	plt.ylabel(r'$w_{\theta}$', fontsize=20)
+	plt.xlabel(r'Separation $\theta$ [deg]', fontsize=20)
+	plt.ylabel(r'Angular Correlation Function $w(\theta)$', fontsize=20)
 
 
 	for j in range(len(wthetas)):
 		plt.scatter(scales, wthetas[j], color=cs[j])
 		plt.errorbar(scales, wthetas[j], yerr=poissonerrs[j], fmt='none', ecolor='k', alpha=0.5)
-		plt.errorbar(scales, wthetas[j], yerr=werrs[j], ecolor=cs[j], fmt='none')
+		#plt.errorbar(scales, wthetas[j], yerr=werrs[j], ecolor=cs[j], fmt='none', label=labels[j])
 
 	plt.yscale('log')
 	plt.xscale('log')
-
-	plt.savefig('plots/ang_autocorr.pdf')
+	plt.legend(fontsize=20)
+	plt.savefig(organizer.plotdir + 'ang_autocorr.pdf')
 	plt.close('all')
 
 def cf_err_comparison(samplename):
@@ -302,7 +387,7 @@ def cf_err_comparison(samplename):
 	plt.ylim(0, 5)
 	plt.xscale('log')
 
-	plt.savefig('plots/error_comparison.pdf')
+	plt.savefig(organizer.plotdir + "error_comparison.pdf")
 	plt.close('all')
 
 def plot_each_sed(binnum, nbins, wavelengths, nufnu, nufnu_err):
@@ -317,63 +402,214 @@ def plot_each_sed(binnum, nbins, wavelengths, nufnu, nufnu_err):
 	plt.xscale('log')
 	plt.ylabel(r'$\nu F_{\nu}$ [arbitrary]', fontsize=20)
 	plt.xlabel(r'$\lambda_{\mathrm{rest}} [\mu \mathrm{m}]$', fontsize=20)
-	plt.savefig('plots/seds/%s.pdf' % binnum)
+	plt.savefig(organizer.plotdir + 'seds/%s.pdf' % binnum)
 	plt.close('all')
 
-def plot_composite_sed(nbins, wavelength_bins, binned_nu_f_nu, lowerrs, uperrs):
+def plot_composite_sed(nbins, wavelengths, binned_nu_f_nu, lowerrs, uperrs):
 	plt.figure(figsize=(8, 7))
 	colors = return_colorscheme(nbins)
 	for j in range(nbins):
 
-		plt.plot(wavelength_bins, binned_nu_f_nu[j], color=colors[j], alpha=0.5)
-		plt.errorbar(wavelength_bins, binned_nu_f_nu[j], yerr=[lowerrs[j], uperrs[j]], ecolor=colors[j], fmt='none')
+		plt.plot(wavelengths, binned_nu_f_nu[j], color=colors[j], alpha=0.5)
+		plt.errorbar(wavelengths, binned_nu_f_nu[j], yerr=[lowerrs[j], uperrs[j]], ecolor=colors[j], fmt='none')
 	#plt.errorbar(wavelength_bins, binned_nu_f_nu, yerr=nufnu_err, ecolor='k', alpha=0.5, fmt='none')
 
 	plt.yscale('log')
 	plt.xscale('log')
 	plt.ylabel(r'$\nu F_{\nu}$ [arbitrary]', fontsize=20)
 	plt.xlabel(r'$\lambda_{\mathrm{rest}} [\mu \mathrm{m}]$', fontsize=20)
-	plt.savefig('plots/seds/composites.pdf')
+	plt.savefig(organizer.plotdir + 'seds/composites.pdf')
 	plt.close('all')
 
 
 
-def plot_each_cf_fit(bin, nbins, scales, cf, cferr, cf_mod_one, cf_mod_two, cf_mod_both, dm_mod=None):
+def plot_each_cf_fit(bin, nbins, data_scales, cf, cferr, smoothscales, cf_mod_one, cf_mod_two, cf_mod_both,
+                     dm_mod=None):
 	plt.figure(figsize=(8,7))
 
 	colors = return_colorscheme(nbins)
-	plt.scatter(scales, cf, c=colors[bin - 1])
-	plt.errorbar(scales, cf, yerr=cferr, fmt='none', ecolor=colors[bin - 1])
-	plt.plot(scales, cf_mod_one, c='k', ls='dashdot', label='HOD 1-Halo', alpha=0.5)
-	plt.plot(scales, cf_mod_two, c='k', ls='dotted', label='HOD 2-Halo', alpha=0.5)
-	plt.plot(scales, cf_mod_both, ls='dashed', c=colors[bin - 1], label='HOD Total')
+	plt.scatter(data_scales, cf, c=colors[bin - 1])
+	plt.errorbar(data_scales, cf, yerr=cferr, fmt='none', ecolor=colors[bin - 1])
+	plt.plot(smoothscales, cf_mod_one, c='k', ls='dashdot', label='HOD 1-Halo', alpha=0.5)
+	plt.plot(smoothscales, cf_mod_two, c='k', ls='dotted', label='HOD 2-Halo', alpha=0.5)
+	plt.plot(smoothscales, cf_mod_both, ls='dashed', c=colors[bin - 1], label='HOD Total')
 	if dm_mod is not None:
-		plt.plot(scales, dm_mod, c='k', ls='dashed', label='2-Halo Dark Matter')
+		plt.plot(smoothscales, dm_mod, c='k', ls='dashed', label='Linear Dark Matter')
 	plt.xscale('log')
 	plt.yscale('log')
-	plt.ylim(1e-4, 5)
-	plt.xlabel(r'$\theta$ [deg]', fontsize=20)
-	plt.ylabel(r'$w(\theta)$', fontsize=20)
+	plt.ylim(1e-3, 5)
+	plt.xlim(1e-3, 1)
+	plt.xlabel(r'Separation $\theta$ [deg]', fontsize=20)
+	plt.ylabel(r'Angular Correlation Function $w(\theta)$', fontsize=20)
 	plt.legend(fontsize=15)
-	plt.savefig('plots/cf_fits/%s.pdf' % bin)
+	plt.savefig(organizer.plotdir + 'cf_fits/%s.pdf' % bin)
 	plt.close('all')
 
-def plot_each_lensing_fit(bin, nbins, scales, power, power_err, cf_mod, unbiasedmod):
-	plt.figure(figsize=(8,7))
+def plot_all_cf_fits(results):
+	cs = return_colorscheme(len(results))
+	fig, ax = plt.subplots(figsize=(8, 7))
+	for j in range(len(results)):
+		plot_scales, w, werr, smooth_thetas, onemodcf, twomodcf, bothmodcf, dmmod = results[j]
+
+		transition_index = np.max(np.where((onemodcf > twomodcf) & (smooth_thetas < 0.5))[0])
+
+		plt.scatter(plot_scales, w, c=cs[j])
+		plt.errorbar(plot_scales, w, yerr=werr, fmt='none', ecolor=cs[j])
+
+		plt.plot(smooth_thetas[:(transition_index+1)], bothmodcf[:(transition_index+1)], ls='dotted', c=cs[j])
+		plt.plot(smooth_thetas[transition_index:], bothmodcf[transition_index:], ls='dashed', c=cs[j])
+		#plt.plot(smooth_thetas, bothmodcf, ls='dashed', c=cs[j])
+
+		plt.plot(smooth_thetas, dmmod, c=cs[j], ls='solid', alpha=0.5)
+
+	plt.text(1e-2, 2e-3, 'Linear Dark Matter', rotation=-7, fontsize=15)
+
+	plt.xscale('log')
+	plt.yscale('log')
+	plt.ylim(1e-3, 3)
+	plt.xlim(2e-3, 5e-1)
+	ax.get_xaxis().set_major_formatter(ScalarFormatter())
+	plt.xlabel(r'Separation $\theta$ [deg]', fontsize=20)
+	plt.ylabel(r'Angular Correlation Function $w(\theta)$', fontsize=20)
+
+	plt.savefig(organizer.plotdir + 'all_cf_fits.pdf')
+	plt.close('all')
+
+
+def plot_each_lensing_fit(bin, nbins, scales, power, power_err, cf_mod, unbiasedmod, spt=False, lcl=True):
+	fig, ax = plt.subplots(figsize=(8,7))
 	colors = return_colorscheme(nbins)
 
-	plt.scatter(scales, power, c=colors[bin - 1])
-	plt.errorbar(scales, power, yerr=power_err, fmt='none', ecolor=colors[bin - 1])
-	plt.plot(scales, cf_mod, ls='dashed', c=colors[bin - 1])
-	plt.plot(scales, unbiasedmod, ls='dotted', c='k', alpha=0.5, label='Dark Matter')
-	plt.xscale('log')
-	plt.yscale('log')
-	plt.legend()
-	plt.xlabel(r'$l$', fontsize=20)
-	plt.ylabel(r'$C_l$', fontsize=20)
+	def ls_to_thetas(x):
+		return 180./x
+	def thetas_to_ls(x):
+		return 180./x
 
-	plt.savefig('plots/lens_fits/%s.pdf' % bin)
+	model_ells = 1+np.arange(len(cf_mod))
+	nobias_ells = 1+np.arange(len(unbiasedmod))
+
+	if lcl:
+		p = power * scales
+		perr = power_err * scales
+		cmod = cf_mod * model_ells
+		nobiasmod = unbiasedmod * nobias_ells
+	else:
+		p, perr, cmod, nobiasmod = power, power_err, cf_mod, unbiasedmod
+
+
+	ax.scatter(scales, p, c=colors[bin - 1])
+	ax.errorbar(scales, p, yerr=perr, fmt='none', ecolor=colors[bin - 1])
+	ax.plot(model_ells, cmod, ls='dashed', c=colors[bin - 1])
+	ax.plot(nobias_ells, nobiasmod, ls='dotted', c='k', alpha=0.5, label='Dark Matter')
+	ax.set_xscale('log')
+	ax.set_yscale('log')
+	ax.set_xlim(10, 2500)
+	ax.xaxis.set_tick_params(which='both', top=False)
+
+	if spt:
+		sptscales = np.load('results/lensing_xcorrs/SPT_scales.npy', allow_pickle=True)
+		xpowerspt = np.load('results/lensing_xcorrs/catwise_%s_%s.npy' % ('SPT', (bin)), allow_pickle=True)
+		power_spt = xpowerspt[0]
+		power_err_spt = np.std(xpowerspt[1:], axis=0)
+		ax.scatter(sptscales, power_spt, edgecolors=colors[bin - 1], facecolors='none')
+		ax.errorbar(sptscales, power_spt, yerr=power_err_spt, fmt='none', ecolor=colors[bin-1])
+
+	secax = ax.secondary_xaxis('top', functions=(ls_to_thetas, thetas_to_ls))
+	secax.set_xlabel(r'Angular Scale [deg]', fontsize=20)
+	secax.get_xaxis().set_major_formatter(ScalarFormatter())
+
+	ax.legend()
+	ax.set_xlabel(r'Multipole Moment $\ell$', fontsize=20)
+	if lcl:
+		ax.set_ylabel(r'Cross-power $\ell C_{\ell}^{\kappa q}$', fontsize=20)
+	else:
+		ax.set_ylabel(r'Cross-power $C_{\ell}^{\kappa q}$', fontsize=20)
+
+	plt.ylim(1e-6, 1e-4)
+
+	ax.get_xaxis().set_major_formatter(ScalarFormatter())
+
+	plt.savefig(organizer.plotdir + 'lens_fits/%s.pdf' % bin)
 	plt.close('all')
+
+
+
+def plot_all_lens_fits(nbins, lensname, modcfs, unbiasedcfs, spt=False, lcl=True):
+	fig, ax = plt.subplots(figsize=(8,7))
+	colors = return_colorscheme(nbins)
+	planckscales = np.load('results/lensing_xcorrs/planck_scales.npy', allow_pickle=True)
+
+	plotshift = 1.03
+
+	ls = 1 + np.arange(len(modcfs[0]))
+
+	def ls_to_thetas(x):
+		return 180./x
+	def thetas_to_ls(x):
+		return 180./x
+
+
+
+	ax.set_xscale('log')
+	ax.set_yscale('log')
+	ax.set_xlim(30, 2500)
+
+	for j in range(nbins):
+		if j == 1:
+			planckscales *= plotshift
+
+		xpower = np.load('results/lensing_xcorrs/catwise_%s_%s.npy' % (lensname, (j+1)), allow_pickle=True)
+		power = xpower[0]
+		power_err = np.std(xpower[1:], axis=0)
+
+		model_ells = 1 + np.arange(len(modcfs[j]))
+		nobias_ells = 1 + np.arange(len(unbiasedcfs[j]))
+
+		if lcl:
+			power *= planckscales
+			power_err *= planckscales
+			cf_mod = modcfs[j] * model_ells
+			unbiasedmod = unbiasedcfs[j] * nobias_ells
+		else:
+			cf_mod = modcfs[j]
+			unbiasedmod = unbiasedcfs[j]
+
+		ax.scatter(planckscales, power, c=colors[j])
+		ax.errorbar(planckscales, power, yerr=power_err, fmt='none', ecolor=colors[j])
+
+		if spt:
+			sptscales = np.load('results/lensing_xcorrs/SPT_scales.npy', allow_pickle=True)
+			xpowerspt = np.load('results/lensing_xcorrs/catwise_%s_%s.npy' % ('SPT', (j + 1)), allow_pickle=True)
+			power_spt = xpowerspt[0]
+			power_err_spt = np.std(xpowerspt[1:], axis=0)
+			ax.scatter(sptscales, power_spt, edgecolors=colors[j], facecolors='none')
+			ax.errorbar(sptscales, power_spt, yerr=power_err_spt, fmt='none', ecolor=colors[j])
+		ax.plot(ls, cf_mod, ls='dashed', c=colors[j])
+		ax.plot(ls, unbiasedmod, ls='dotted', c=colors[j], alpha=0.5)
+
+	#ax.plot(ls, np.zeros(len(ls)), c='k', ls='dotted')
+	ax.xaxis.set_tick_params(which='both', top=False)
+
+	secax = ax.secondary_xaxis('top', functions=(ls_to_thetas, thetas_to_ls))
+	secax.set_xlabel(r'Angular Scale [deg]', fontsize=20)
+	secax.get_xaxis().set_major_formatter(ScalarFormatter())
+
+	ax.text(70, 1e-5, 'Linear Dark Matter', fontsize=15)
+
+	ax.set_xlabel(r'Multipole Moment $\ell$', fontsize=20)
+
+	if lcl:
+		ax.set_ylabel(r'Cross-power $\ell C_{\ell}^{\kappa q}$', fontsize=20)
+	else:
+		ax.set_ylabel(r'Cross-power $C_{\ell}^{\kappa q}$', fontsize=20)
+	ax.get_xaxis().set_major_formatter(ScalarFormatter())
+
+
+	plt.ylim(1e-6, 1e-4)
+
+	plt.savefig(organizer.plotdir + 'lens_fits/all_lens_fits.pdf')
+	plt.close('all')
+
 
 
 def bias_v_color(samplename):
@@ -398,7 +634,7 @@ def bias_v_color(samplename):
 	plt.ylabel(r'$b_{q}$', fontsize=20)
 	plt.legend(fontsize=20)
 
-	plt.savefig('plots/bias_v_color.pdf')
+	plt.savefig(organizer.plotdir + 'bias_v_color.pdf')
 	plt.close('all')
 
 
@@ -446,7 +682,7 @@ def mass_v_color(samplename):
 
 	lens_results = np.load('results/lensing_xcorrs/mass/%s.npy' % samplename, allow_pickle=True)
 	cs = return_colorscheme(len(lens_results[0]))
-	clustering_results = np.load('results/clustering/mass/%s.npy' % samplename, allow_pickle=True)
+	clustering_results = np.load('results/clustering/mass_2h/%s.npy' % samplename, allow_pickle=True)
 
 	medcolors, lensmass, lensmasserrs = lens_results[0], lens_results[1], lens_results[2]
 	medcolors, cfmass, cfmassloerrs, cfmasshierrs = clustering_results[0], clustering_results[1], \
@@ -462,42 +698,84 @@ def mass_v_color(samplename):
 	plt.ylabel(r'$\mathrm{log}_{10}(M_h / h^{-1} M_{\odot})$', fontsize=20)
 	plt.legend(fontsize=20)
 
-	plt.savefig('plots/mass_v_color.pdf')
+	plt.savefig(organizer.plotdir + 'mass_v_color.pdf')
 	plt.close('all')
 
 def plot_hpx_map(map, name):
+	import healpy as hp
 	plt.figure()
+
 	hp.mollview(map)
-	plt.savefig('plots/maps/%s.pdf' % name)
+	plt.savefig(organizer.plotdir + '%s.pdf' % name)
 	plt.close('all')
 
-def lensing_xcorrs(samplename):
+def lensing_xcorrs(samplename, lensnames=['planck'], lcl=False):
 
 	plt.close('all')
-	plt.figure(figsize=(8, 7))
+	fig, ax = plt.subplots(figsize=(8, 7))
+
+	planck_scales = np.load('results/lensing_xcorrs/planck_scales.npy', allow_pickle=True)
 
 
-	plt.xlabel(r'$l$', fontsize=20)
-	plt.ylabel(r'$C_{l}$', fontsize=20)
+	planckclfiles = sorted(glob.glob('results/lensing_xcorrs/%s_planck_*' % samplename))
+	colors = return_colorscheme(len(planckclfiles))
 
-	scales = np.load('results/lensing_xcorrs/scales.npy', allow_pickle=True)
-
-	clfiles = sorted(glob.glob('results/lensing_xcorrs/%s_*' % samplename))
-	colors = return_colorscheme(len(clfiles))
+	markers = ['o', 's', 'D', '^']
 
 
-	for j in range(len(clfiles)):
 
-		clarr = np.load(clfiles[j], allow_pickle=True)
-		cl = clarr[0]
-		clerr = np.std(clarr[1:], axis=0)
+	def ls_to_thetas(x):
+		return 180./x
+	def thetas_to_ls(x):
+		return 180./x
 
-		plt.scatter(scales, cl, color=colors[j])
-		plt.errorbar(scales, cl, yerr=clerr, ecolor=colors[j], fmt='none')
-	plt.yscale('log')
-	plt.xscale('log')
+	labels = ['Unobscured', 'Obscured']
 
-	plt.savefig('plots/lensing_xcorrs.pdf')
+	for j in range(len(planckclfiles)):
+
+		for k, name in enumerate(lensnames):
+
+			scales = np.load('results/lensing_xcorrs/%s_scales.npy' % name, allow_pickle=True)
+			clfile = sorted(glob.glob('results/lensing_xcorrs/%s_%s_%s*' % (samplename, name, (j+1))))
+
+
+			clarr = np.load(clfile[0], allow_pickle=True)
+			if name == 'planck+SPT':
+				cl = clarr[0]
+				clerr = clarr[1]
+			else:
+				cl = clarr[0]
+				clerr = np.std(clarr[1:], axis=0)
+
+			if lcl:
+				cl *= scales
+				clerr *= scales
+			if k>0:
+				alpha=0.3
+				scales *= 1.1*k
+			else:
+				alpha=1.
+
+			ax.scatter(scales, cl, color=colors[j], alpha=alpha)
+			ax.errorbar(scales, cl, yerr=clerr, ecolor=colors[j], fmt='none', label=labels[j], marker=markers[j],
+			            alpha=alpha)
+
+
+	ax.xaxis.set_tick_params(which='both', top=False)
+
+	secax = ax.secondary_xaxis('top', functions=(ls_to_thetas, thetas_to_ls))
+	secax.set_xlabel(r'Angular Scale [deg]', fontsize=20)
+
+	ax.set_xscale('log')
+	ax.set_yscale('log')
+	ax.legend(fontsize=20)
+	ax.set_xlabel(r'Multipole Moment $\ell$', fontsize=20)
+	if lcl:
+		ax.set_ylabel(r'Cross-power $\ell C_{\ell}^{\kappa q}$', fontsize=20)
+	else:
+		ax.set_ylabel(r'Cross-power $C_{\ell}^{\kappa q}$', fontsize=20)
+
+	plt.savefig(organizer.plotdir + 'lensing_xcorrs.pdf')
 	plt.close('all')
 
 def visualize_xcorr(densproj, lensproj):
@@ -517,14 +795,15 @@ def depth_v_density(depths, densities, errors):
 	plt.xlabel(r'$5 \sigma$ r PSF depth [AB mags]', fontsize=20)
 	plt.ylabel('Weight', fontsize=20)
 	#plt.ylim(5, 15)
-	plt.savefig('plots/depth_v_density/ratio.pdf')
+	plt.savefig(organizer.plotdir + 'depth_v_density/ratio.pdf')
 	plt.close('all')
 
 def data_vs_random_density(ratiomap, binno):
+	import healpy as hp
 	plt.close('all')
 	plt.figure(figsize=(9, 7))
-	hp.mollview(ratiomap, coord=['G', 'C'])
-	plt.savefig('plots/depth_v_density/%s_map.pdf' % binno)
+	hp.mollview(ratiomap)
+	plt.savefig(organizer.plotdir + 'depth_v_density/%s_map.pdf' % binno)
 	plt.close('all')
 
 def low_z_cut_plot(colorname, unresolved_xcolors, unresolved_ycolors, resolved_xcolors, resolved_ycolors, m1, b1, m2,
@@ -548,7 +827,7 @@ def low_z_cut_plot(colorname, unresolved_xcolors, unresolved_ycolors, resolved_x
 
 	ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
 	ax.scatter_density(unresolved_xcolors, unresolved_ycolors, color='k', alpha=1)
-	ax.scatter_density(resolved_xcolors, resolved_ycolors, color='b', alpha=1)
+	ax.scatter_density(resolved_xcolors, resolved_ycolors, color='g', alpha=1)
 	ax.plot(np.linspace(xintersect1, intersection_x, 3),
 	        m1*np.linspace(xintersect1, intersection_x, 3) + b1, c='k', ls='--')
 	ax.plot(np.linspace(intersection_x, 10, 3), m2 * np.linspace(intersection_x, 10, 3) + b2, c='k', ls='--')
@@ -559,7 +838,7 @@ def low_z_cut_plot(colorname, unresolved_xcolors, unresolved_ycolors, resolved_x
 	ax.set_ylabel('z - W2', fontsize=20)
 	ax.set_xlim(2, 10)
 	ax.set_ylim(2, 10)
-	plt.savefig('plots/lowz_cut.pdf')
+	plt.savefig(organizer.plotdir + 'lowz_cut.pdf')
 	plt.close('all')
 
 
@@ -585,7 +864,7 @@ def density_vs_coord(binnum, ratios, errors, bincenters, coordframe, lonlat):
 	plt.xlabel('%s %s [deg]' % (coordframename, coordname), fontsize=20)
 	plt.ylabel('$N_{data}/N_{rand}$', fontsize=20)
 
-	plt.savefig('plots/density_vs_coord/%s_%s_%s.pdf' % (coordframe, lonlat, binnum))
+	plt.savefig(organizer.plotdir + 'density_vs_coord/%s_%s_%s.pdf' % (coordframe, lonlat, binnum))
 	plt.close('all')
 
 def mateos_plot(nbins, binnedtab, longband):
@@ -611,7 +890,7 @@ def mateos_plot(nbins, binnedtab, longband):
 		ax.scatter_density(nondetcat['W2mag'] - 10, nondetcat['W1mag'] - nondetcat['W2mag'],
 		                   color='k', alpha=0.5)
 
-	all_sources = Table.read('plots/mateos/cosmos_catwise_allwise.fits')
+	all_sources = Table.read(organizer.plotdir + 'mateos/cosmos_catwise_allwise.fits')
 	all_sources = all_sources[np.where(np.logical_not(np.isnan(all_sources['e_W%smag' % longband])))]
 	ax.scatter_density(all_sources['w2mpro'] - all_sources['W%smag' % longband], all_sources['w1mpro'] - all_sources[
 		'w2mpro'],
@@ -632,7 +911,7 @@ def mateos_plot(nbins, binnedtab, longband):
 		ax.set_xlim(-1, 12)
 	ax.set_ylim(-1, 3)
 
-	plt.savefig('plots/mateos/%s_W%s.pdf' % (binnum, longband))
+	plt.savefig(organizer.plotdir + 'mateos/%s_W%s.pdf' % (binnum, longband))
 	plt.close('all')
 
 
@@ -641,8 +920,8 @@ def radio_detection_fraction(colors, fracs, survey):
 	plt.figure(figsize=(8, 7))
 	plt.scatter(colors, fracs, c=return_colorscheme(len(fracs)))
 	plt.xlabel(r'$r - W2$', fontsize=20)
-	#plt.ylabel('%s Detection Fraction' % survey, fontsize=20)
-	plt.savefig('plots/radio/%s.pdf' % survey)
+	plt.ylabel(r'Detection Fraction', fontsize=20)
+	plt.savefig(organizer.plotdir + 'radio/%s.pdf' % survey)
 	plt.close('all')
 
 
@@ -676,7 +955,7 @@ def donley_plot(nbins, matchedtab, fulltab, binnum):
 	plt.legend(fontsize=20)
 	ax.set_ylim(-2, 3)
 	ax.set_xlim(-1.5, 2)
-	plt.savefig('plots/donley/%s.pdf' % binnum)
+	plt.savefig(organizer.plotdir + 'donley/%s.pdf' % binnum)
 	plt.close('all')
 
 def all_clustering_systematics(nbins, agnbin, bincenters, corbincenters, ratios, corratios, errors, corerrs, systnames):
@@ -710,7 +989,7 @@ def all_clustering_systematics(nbins, agnbin, bincenters, corbincenters, ratios,
 	#plt.legend(fontsize=15)
 	plt.ylabel('$N_{\mathrm{data}} / N_{\mathrm{random}}$', fontsize=25)
 
-	plt.savefig('plots/systematics/all_%s.pdf' % agnbin)
+	plt.savefig(organizer.plotdir + 'systematics/all_%s.pdf' % agnbin)
 	plt.close('all')
 
 
@@ -733,7 +1012,7 @@ def stern05_plot(nbins, matchedtab, fulltab, binnum):
 	plt.legend(fontsize=20)
 	ax.set_ylim(-0.5, 2)
 	ax.set_xlim(-1, 3)
-	plt.savefig('plots/stern/%s.pdf' % binnum)
+	plt.savefig(organizer.plotdir + 'stern/%s.pdf' % binnum)
 	plt.close('all')
 
 def plot_kim_diagrams(nbins, binnum, ki2, i24, i2mips):
@@ -757,7 +1036,7 @@ def plot_kim_diagrams(nbins, binnum, ki2, i24, i2mips):
 	ax.set_xlim(-1.5, 4)
 	ax.set_ylim(-1.5, 6)
 
-	plt.savefig('plots/messias/ki_%s.pdf' % binnum)
+	plt.savefig(organizer.plotdir + 'messias/ki_%s.pdf' % binnum)
 	plt.close('all')
 
 	plt.close('all')
@@ -781,7 +1060,7 @@ def plot_kim_diagrams(nbins, binnum, ki2, i24, i2mips):
 
 
 
-	plt.savefig('plots/messias/im_%s.pdf' % binnum)
+	plt.savefig(organizer.plotdir + 'messias/im_%s.pdf' % binnum)
 	plt.close('all')
 
 def plot_stacks(return_ax=False):
@@ -826,11 +1105,14 @@ def plot_stacks(return_ax=False):
 	plt.subplots_adjust(wspace=0.03)
 	if return_ax:
 		return plt.gca()
-	plt.savefig('plots/lens_stacks.pdf', bbox_inches='tight')
+	plt.savefig(organizer.plotdir + 'lens_stacks.pdf', bbox_inches='tight')
 	plt.close('all')
 
 
-def hod_corner(flatchain, ndim, binnum, nbins):
+
+
+def hod_corner(analysis, flatchain, ndim, binnum, nbins):
+	import corner
 	plt.close('all')
 	param_names = [r'log $M_{\rm min}$', r'$\alpha$', 'log $M1$']
 	derived_names = [r'$f_{\rm sat}$', r'$b_{\mathrm{eff}}$',
@@ -853,7 +1135,53 @@ def hod_corner(flatchain, ndim, binnum, nbins):
 		smooth1d=0.5,
 	)
 
-	plt.savefig("plots/cf_fits/hod_params_%s.pdf" % binnum)
+	plt.savefig(organizer.plotdir + "%s_hod_params_%s.pdf" % (analysis, binnum))
+	plt.close('all')
+
+
+def overlapping_corners(analysis, flatchains, ndim, nbins):
+	import corner
+	plt.close('all')
+	param_names = [r'log $M_{\rm min}$', r'$\alpha$', 'log $M1$']
+	derived_names = [r'$f_{\rm sat}$', r'$b_{\mathrm{eff}}$',
+	                 r'log $M_{\mathrm{eff}}$']
+	labelnames = param_names[:ndim] + derived_names
+	colors = return_colorscheme(nbins)
+
+	fig = corner.corner(
+		flatchains[0],
+		labels=labelnames,
+		show_titles=False,
+		# range=lim,
+		levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-4)),
+		plot_datapoints=False,
+		plot_density=False,
+		fill_contours=True,
+		color=colors[0],
+		hist_kwargs={"color": "%s" % colors[0]},
+		label_kwargs={'fontsize': 20},
+		smooth=0.5,
+		smooth1d=0.5,
+	)
+
+	for j in range(1, nbins):
+		corner.corner(
+			flatchains[j],
+			labels=labelnames,
+			show_titles=False,
+			# range=lim,
+			levels=(1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-4)),
+			plot_datapoints=False,
+			plot_density=False,
+			fill_contours=True,
+			color=colors[j],
+			hist_kwargs={"color": "%s" % colors[j]},
+			label_kwargs={'fontsize': 20},
+			smooth=0.5,
+			smooth1d=0.5, fig=fig,
+		)
+
+	plt.savefig(organizer.plotdir + "%s_hod_params.pdf" % analysis)
 	plt.close('all')
 
 def plot_every_observed_sed(fluxtable, fluxerrtable, eff_wavelengths, zs, ids=None):
@@ -877,7 +1205,7 @@ def plot_every_observed_sed(fluxtable, fluxerrtable, eff_wavelengths, zs, ids=No
 		plt.yscale('log')
 		plt.title(r'$z = %s $' % zs[j], fontsize=20)
 		plt.xlim(1e-1, 5e2)
-		plt.savefig('plots/individual_seds/%s.pdf' % j)
+		plt.savefig(organizer.plotdir + 'individual_seds/%s.pdf' % j)
 		plt.close('all')
 
 def plot_luminosity_distributions(medlum, lumratios):
@@ -891,5 +1219,95 @@ def plot_luminosity_distributions(medlum, lumratios):
 		plt.hist(lums, bins=30, histtype='step', color=colors[j])
 	plt.xlabel(r'log$_{10}(\nu L_{\nu}(6 \mu m))$', fontsize=20)
 	plt.ylabel('Frequency', fontsize=20)
-	plt.savefig('plots/lum_distributions.pdf')
+	plt.savefig(organizer.plotdir + 'lum_distributions.pdf')
+	plt.close('all')
+
+
+def plot_bias_vs_z():
+	from source import bias_tools
+	import redshift_dists
+
+	b, berr = bias_tools.combine_biases()
+	blens1 = np.load('results/lensing_xcorrs/bias/catwise_1.npy', allow_pickle=True)
+	blens2 = np.load('results/lensing_xcorrs/bias/catwise_2.npy', allow_pickle=True)
+	colorsche = return_colorscheme(len(b))
+
+
+	plottingshift = 0.008
+	zrange = np.linspace(0., 4., 50)
+	laurent_b, laurent_b_err = bias_tools.qso_bias_for_z('laurent', zs=zrange)
+
+	laurent_mass, laurent_upmass, laurent_lowmass = [], [], []
+	for j in range(len(zrange)):
+		laurent_mass.append(bias_tools.bias_to_mass(inputbias=laurent_b[j], z=zrange[j]))
+		laurent_upmass.append(bias_tools.bias_to_mass(inputbias=laurent_b[j]+laurent_b_err[j], z=zrange[j]))
+		laurent_lowmass.append(bias_tools.bias_to_mass(inputbias=laurent_b[j]-laurent_b_err[j], z=zrange[j]))
+
+	plt.close('all')
+	#fig, ax = plt.subplots(figsize=(7,6))
+	fig, (ax, ax2) = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(7, 6 * 2))
+	laurentart = ax.fill_between(zrange, laurent_b-laurent_b_err, laurent_b+laurent_b_err, color='k',
+	                             alpha=0.1)
+
+	laurentmassart = ax2.fill_between(zrange, laurent_lowmass, laurent_upmass, color='k',
+	                             alpha=0.1)
+	legendlist = []
+	ax.text(1.6, 2.2, 'Optical Type-1 QSOs (Laurent+17)', rotation=30, alpha=0.5)
+	#ax2.text(1.6, 12.35, 'Optical Type-1 QSOs (Laurent+17)', rotation=0, alpha=0.5)
+
+	ax.scatter([1.27], [2.2], c='royalblue', marker='s', alpha=0.2)
+	ax.scatter([1.26], [3.05], c='firebrick', marker='s', alpha=0.2)
+	ax.errorbar([1.27], [2.2], yerr=[0.45], fmt='none', ecolor='royalblue', alpha=0.2)
+	ax.errorbar([1.26], [3.05], yerr=[0.7], fmt='none', ecolor='firebrick', alpha=0.2)
+	split_markers(ax, marker='s', legendlist=legendlist, alpha=0.2)
+
+
+	ax.scatter([1.05], [1.7], c='royalblue', marker='X', alpha=0.2)
+	ax.scatter([0.98], [2.15], c='firebrick', marker='X', alpha=0.2)
+	ax.errorbar([1.05], [1.7], yerr=[0.1], fmt='none', ecolor='royalblue', alpha=0.2)
+	ax.errorbar([0.98], [2.15], yerr=[0.11], fmt='none', ecolor='firebrick', alpha=0.2)
+	split_markers(ax, marker='X', legendlist=legendlist, alpha=0.2)
+
+	ax.scatter([0.7], [0.9], c='royalblue', marker='<', alpha=0.2)
+	ax.scatter([0.77], [0.7], c='firebrick', marker='<', alpha=0.2)
+	ax.errorbar([0.7], [0.9], yerr=[0.2], fmt='none', ecolor='royalblue', alpha=0.2)
+	ax.errorbar([0.77], [0.7], yerr=[0.2], fmt='none', ecolor='firebrick', alpha=0.2)
+	split_markers(ax, marker='<', legendlist=legendlist, alpha=0.2)
+
+
+	cross_names = ['SDWFS (Hickox+11)', 'WISE+SDSS (Dipompeo+17)', 'PRIMUS+DEEP2 (Mendez+16)', 'This Work (Lensing + '
+	                                                                                  'Clustering)']
+
+
+	ax.tick_params('both', labelsize=15, which='major', length=8)
+	ax.tick_params('both', which='minor', length=3)
+
+	ax2.tick_params('both', labelsize=15, which='major', length=8)
+	ax2.tick_params('both', which='minor', length=3)
+
+
+
+
+	for j in range(len(b)):
+		f, zs, szs, pzs = redshift_dists.get_redshifts(bin=(j+1))
+		medz = np.median(zs)
+		ax.scatter(medz, b[j], c=colorsche[j])
+		ax.errorbar(medz, b[j], yerr=berr[j], fmt='none', ecolor=colorsche[j])
+
+	split_markers(ax, marker='o', legendlist=legendlist)
+
+
+
+
+	ax.set_ylabel('$b_q$', fontsize=25, rotation=0, labelpad=15)
+	ax2.set_ylabel(r'log$_{10}(M_h/h^{-1} M_{\odot})$', fontsize=25)
+
+	ax.set_xlim(0.5, 2.5)
+	ax.set_ylim(0.5, 5)
+	ax2.set_xlabel('$\mathrm{Redshift} \ (z)$', fontsize=20)
+	ax2.set_ylim(11.5, 13.5)
+
+	ax.legend(legendlist, cross_names, fontsize=12, loc=2)
+	plt.subplots_adjust(hspace=0.1)
+	plt.savefig(organizer.plotdir + 'bias_v_z.pdf')
 	plt.close('all')

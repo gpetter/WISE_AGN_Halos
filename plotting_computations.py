@@ -41,5 +41,3 @@ def freedman_diaconis(vals):
 
 	return ceil(nbins)
 
-def combined_mass(lens_mass, lens_mass_errs, cluster_mass, cluster_mass_errs):
-	weighted_mean = np.average(lens)

@@ -17,8 +17,8 @@ def equatorial_to_galactic(ra, dec):
 # convert ras and decs to galactic l, b coordinates
 def galactic_to_equatorial(l, b):
 	coords = SkyCoord(l, b, unit='deg', frame='galactic')
-	ras = np.array(coords.ra * u.rad.to('deg'))
-	decs = np.array(coords.dec * u.rad.to('deg'))
+	ras = np.array(coords.icrs.ra * u.deg)
+	decs = np.array(coords.icrs.dec * u.deg)
 	return ras, decs
 
 # for a given source list with ras and decs, create a healpix map of source density for a given pixel size
