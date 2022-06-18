@@ -1,11 +1,6 @@
 import numpy as np
 import healpy as hp
 import pandas as pd
-from astropy.stats import sigma_clipped_stats
-from astropy.convolution import Gaussian2DKernel
-from scipy.signal import convolve as scipy_convolve
-
-from astropy.table import Table
 import masking
 import glob
 import astropy.units as u

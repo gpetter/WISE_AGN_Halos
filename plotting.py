@@ -12,7 +12,7 @@ from matplotlib.ticker import ScalarFormatter
 
 
 #import glob
-#import mpl_scatter_density
+import mpl_scatter_density
 
 plt.style.use('science')
 mpl.rcParams['axes.labelsize'] = 30

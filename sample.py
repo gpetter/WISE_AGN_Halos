@@ -130,7 +130,7 @@ def filter_table(soln='mpro', criterion='r90', w2brightcut=9, w2faintcut=None,
 
 	if remake_mask:
 		print('remaking mask')
-		masking.total_mask(depth_cut=150, assef=1, unwise=1, planck=0, bright=1, ebv=0.1, ls_mask=0, zero_depth_mask=1,
+		masking.total_mask(depth_cut=150, assef=1, unwise=0, planck=0, bright=1, ebv=0.1, ls_mask=0, zero_depth_mask=1,
 		                   area_lost_thresh=0.2)
 
 	cat = masking.mask_tab(cat)

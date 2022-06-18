@@ -1,24 +1,19 @@
 from mocpy import MOC
-from mocpy import mocpy
 import mhealpy as mhp
 import healpy as hp
 import numpy as np
 import glob
-from pixell import enmap
-from astropy.coordinates import SkyCoord
 from astropy import units as u
-from zipfile import ZipFile
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.table import Table
-
 import healpixhelper
 
 
 def make_unwise_bitmask(max_order, low_nside):
 	from os.path import expanduser
 	home = expanduser("~")
-	bitmaskdir = home + '/Desktop/unwise_bitmask/'
+	bitmaskdir = home + '/Dartmouth/data/unwise_bitmask/'
 
 
 	low_pix_area = hp.nside2pixarea(low_nside)      # steradians

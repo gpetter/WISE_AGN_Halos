@@ -42,7 +42,7 @@ if len(glob.glob('results/clustering/scales.npy')) > 0:
 
 
 
-clustering_by_bin(500, samplename, -2.55, -0.5, nscalebins=15, oversample=1, nthreads=10)
+clustering_by_bin(500, samplename, -2.55, -0.5, nscalebins=15, oversample=1, nthreads=24)
 #plotting.plot_ang_autocorrs(samplename)
 #plotting.cf_err_comparison(samplename)
 

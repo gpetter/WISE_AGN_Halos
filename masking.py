@@ -22,7 +22,7 @@ def ls_depth_mask(nside, galactic=False):
 
 	# read first random catalog
 	tab = Table.read('catalogs/randoms/ls_randoms/ls_randoms_1.fits')
-	tab = tab['RA', 'DEC', 'PSFDEPTH_R', 'PSFDEPTH_Z', 'EBV']
+	tab = tab['RA', 'DEC', 'PSFDEPTH_R', 'PSFDEPTH_Z', 'EBV', 'l', 'b']
 
 
 	if galactic:
@@ -57,17 +57,15 @@ def ls_depth_mask(nside, galactic=False):
 
 		#lsmask += healpixhelper.healpix_average_in_pixels(lons, lats, 1024, newtab['MASKBITS'])
 		lons_zero_depth += list(lons[np.where(newtab['PSFDEPTH_R'] == 0)])
-		lats_zero_depth += list(lats[np.where(newtab['PSFDEPTH_R'] == 0)])
+		lats_zero_depth += list(lats[np.where(newtab['PSFDEPTH_R'] == 0)])"""
 
 
-	zero_depth_map = healpixhelper.healpix_density_map(lons_zero_depth, lats_zero_depth, 1024)
-
-	lsmask = hp.ud_grade(lsmask, nside)
+	zero_depth_map = healpixhelper.healpix_density_map(lons_zero_depth, lats_zero_depth, nside)
 	
 
 
-	#hp.write_map('masks/zerodepth_mask.fits', zero_depth_map, overwrite=True)
-	#hp.write_map('masks/ls_badmask.fits', lsmask, overwrite=True)"""
+	hp.write_map('masks/zerodepth_mask.fits', zero_depth_map, overwrite=True)
+	#hp.write_map('masks/ls_badmask.fits', lsmask, overwrite=True)
 
 
 
@@ -148,7 +146,7 @@ def mask_saa_stripes(nside):
 	hp.write_map('masks/saa.fits', mask, overwrite=True)
 
 def write_masks(nside):
-	#ls_depth_mask(nside, galactic=True)
+	ls_depth_mask(nside, galactic=True)
 	assef_mask(nside)
 	mask_bright_stars(nside)
 	mask_ecliptic_caps(nside)
